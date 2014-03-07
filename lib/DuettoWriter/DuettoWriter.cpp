@@ -1159,6 +1159,31 @@ bool DuettoWriter::isUnion(const Type* t) const
 		t->getStructName().startswith("union."));
 }
 
+
+bool DuettoWriter::canBeCalledIndirectly(const Function * f) const 
+{
+	assert(f);
+	function_indirect_call_map_t::iterator iter = functionIndirectCallMap.find(f);
+	
+	if (functionIndirectCallMap.end() == iter)
+	{
+		bool ans = false;
+		for (Function::const_use_iterator it = f->use_begin(); it != f->use_end() && !ans; ++it)
+		{
+			if (const CallInst * ci = dyn_cast<const CallInst>(*it))
+				if (ci->getCalledFunction())
+					continue;
+			if (const InvokeInst * ci = dyn_cast<const InvokeInst>(*it))
+				if (ci->getCalledFunction())
+					continue;
+			ans = false;
+		}
+
+		iter = functionIndirectCallMap.insert(std::make_pair(f, ans) ).first;
+	}
+	return iter->second;
+}
+
 bool DuettoWriter::safeUsagesForNewedMemory(const Value* v) const
 {
 	Value::const_use_iterator it=v->use_begin();
@@ -1668,6 +1693,24 @@ void DuettoWriter::compileMethodArgs(const llvm::User::const_op_iterator it, con
 	stream << ')';
 }
 
+void DuettoWriter::compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it,
+						const llvm::User::const_op_iterator itE,
+						llvm::Function::const_arg_iterator arg_it)
+{
+	stream << '(';
+	
+	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur, ++arg_it)
+	{
+		if(cur!=it)
+			stream << ", ";
+		if ( arg_it->getType()->isPointerTy() )
+			compileOperand(*cur, getPointerKind(&(*arg_it)));
+		else
+			compileOperand(*cur, REGULAR);
+	}
+	stream << ')';
+}
+
 /*
  * This method is fragile, each opcode must handle the phis in the correct place
  */
@@ -1863,7 +1906,16 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableIns
 			}
 			//If we are dealing with inline asm we are done
 			if(!ci.isInlineAsm())
-				compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
+			{
+				const Function * f = ci.getCalledFunction();
+				if ( f && !f->isVarArg() )
+				{
+					assert( f->getArgumentList().size() == ci.getNumArgOperands() );
+					compileMethodArgsForDirectCall(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(),f->arg_begin() );
+				}
+				else
+					compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
+			}
 			return COMPILE_OK;
 		}
 		case Instruction::LandingPad:
@@ -3418,6 +3470,12 @@ void DuettoWriter::makeJS()
 	for (known_pointers_t::iterator iter = debugAllPointersSet.begin(); iter != debugAllPointersSet.end(); ++iter)
 	{
 		printPointerInfo(*iter);
+	}
+	
+	llvm::errs() << "Debug indirect function calls:\n";
+	for (function_indirect_call_map_t::iterator iter = functionIndirectCallMap.begin(); iter != functionIndirectCallMap.end(); ++iter)
+	{
+		llvm::errs() << iter->first->getName() << ": " << iter->second << "\n";
 	}
 #endif
 
