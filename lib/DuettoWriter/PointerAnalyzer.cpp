@@ -98,15 +98,6 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 	if (DynamicAllocInfo::getAllocType(v) != DynamicAllocInfo::not_an_alloc )
 		return iter->second = COMPLETE_ARRAY;
 
-	if ( const Argument * arg = dyn_cast<const Argument>(v) )
-	{
-		const Function * F = arg->getParent();
-		
-		//TODO properly handle varargs
-		if (!F || canBeCalledIndirectly(F) || F->isVarArg())
-			return iter->second = REGULAR;
-	}
-	
 	if (isa<const PHINode>(v) || isa<const Argument>(v))
 	{
 		if (TypeSupport::isImmutableType( pt->getElementType() ) )

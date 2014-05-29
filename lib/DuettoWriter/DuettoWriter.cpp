@@ -140,7 +140,7 @@ void DuettoWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			stream << ".";
 		}
 		stream.write(funcName,funcNameLen);
-		compileMethodArgs(it,itE);
+		compileMethodArgs(it,itE,calledFunction);
 	}
 }
 
@@ -580,11 +580,12 @@ void DuettoWriter::compileFree(const Value* obj)
 	//TODO: Clean up class related data structures
 }
 
-DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::handleBuiltinCall(ImmutableCallSite callV, const Function * func)
+DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::handleBuiltinCall(ImmutableCallSite callV)
 {
 	assert( callV.isCall() || callV.isInvoke() );
+	
+	const Function * func = callV.getCalledFunction();
 	assert( func );
-	assert( (func == callV.getCalledFunction() ) || !(callV.getCalledFunction()) );
 	
 	bool userImplemented = !func->empty();
 	
@@ -666,7 +667,7 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::handleBuiltinCall(Immut
 		//keeping all local variable around. The helper
 		//method is printed on demand depending on a flag
 		stream << "duettoCreateClosure";
-		compileMethodArgs(it, itE);
+		compileMethodArgs(it, itE, func);
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::flt_rounds)
@@ -726,7 +727,7 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::handleBuiltinCall(Immut
 		if(strncmp(typeName, "String", 6)!=0)
 			stream << "new ";
 		stream.write(typeName, typeLen);
-		compileMethodArgs(it, itE);
+		compileMethodArgs(it, itE, func);
 		return COMPILE_OK;
 	}
 	return COMPILE_UNSUPPORTED;
@@ -1295,30 +1296,35 @@ void DuettoWriter::compilePHIOfBlockFromOtherBlock(const BasicBlock* to, const B
 	}
 }
 
-void DuettoWriter::compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE)
+void DuettoWriter::compileMethodArgs(const llvm::User::const_op_iterator it,
+				     const llvm::User::const_op_iterator itE,
+				     const Function * calledFunc)
 {
-	stream << '(';
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur)
-	{
-		if(cur!=it)
-			stream << ", ";
-		compileOperand(*cur, REGULAR);
-	}
-	stream << ')';
-}
+	
+	bool passNonRegulars = calledFunc && analyzer.hasNonRegularArgs(calledFunc);
 
-void DuettoWriter::compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it,
-						const llvm::User::const_op_iterator itE,
-						llvm::Function::const_arg_iterator arg_it)
-{
 	stream << '(';
 	
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur, ++arg_it)
+	Function::const_arg_iterator arg_it;
+	
+	if (passNonRegulars)
+		arg_it = calledFunc->arg_begin();
+	
+	for( User::const_op_iterator cur = it; cur != itE; ++cur )
 	{
-		if(cur!=it)
+		if(cur != it)
 			stream << ", ";
-		if ( arg_it->getType()->isPointerTy() )
-			compileOperand(*cur, analyzer.getPointerKind(&(*arg_it)));
+		
+		if ( passNonRegulars )
+		{
+			assert (arg_it != calledFunc->arg_end() );
+			
+			if ( arg_it->getType()->isPointerTy() )
+				compileOperand(*cur, analyzer.getPointerKind(arg_it));
+			else
+				compileOperand(*cur, REGULAR);
+			arg_it++;
+		}
 		else
 			compileOperand(*cur, REGULAR);
 	}
@@ -1351,7 +1357,7 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileTerminatorInstru
 			if(ci.getCalledFunction())
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, ci.getCalledFunction());
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				assert(cf!=COMPILE_EMPTY);
 				if(cf==COMPILE_OK)
 				{
@@ -1370,7 +1376,7 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileTerminatorInstru
 				compileOperand(ci.getCalledValue());
 			}
 
-			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
+			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(), ci.getCalledFunction());
 			stream << ';' << NewLine;
 			//Only consider the normal successor for PHIs here
 			//For each successor output the variables for the phi nodes
@@ -1500,7 +1506,7 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableIns
 			if(calledFunc)
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, calledFunc);
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				if(cf!=COMPILE_UNSUPPORTED)
 					return cf;
 				stream << '_' << calledFunc->getName();
@@ -1512,15 +1518,8 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableIns
 			}
 			//If we are dealing with inline asm we are done
 			if(!ci.isInlineAsm())
-			{
-				if ( analyzer.hasNonRegularArgs(calledFunc) )
-				{
-					assert( calledFunc->getArgumentList().size() == ci.getNumArgOperands() );
-					compileMethodArgsForDirectCall(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(),calledFunc->arg_begin() );
-				}
-				else
-					compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
-			}
+				compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(),calledFunc);
+
 			return COMPILE_OK;
 		}
 		case Instruction::LandingPad:
@@ -2516,15 +2515,52 @@ void DuettoWriter::compileMethod(const Function& F)
 {
 	currentFun = &F;
 	stream << "function _" << F.getName() << "(";
-	const Function::const_arg_iterator A=F.arg_begin();
-	const Function::const_arg_iterator AE=F.arg_end();
-	for(Function::const_arg_iterator curArg=A;curArg!=AE;++curArg)
+	
+	// Compile function arguments
+	
+	// If this flag is set, every caller will pass
+	// pointers as regular, even if the analyzer returns non regular
+	// for a given argument
+	// We need to manually demote pointers to COMPLETE_OBJECT if necessary.
+	
+	bool alwaysPassedAsRegular = !analyzer.hasNonRegularArgs(&F);
+	
+	SmallVector< const Argument *, 4 > demotedArgs;
+	
+	for ( Function::const_arg_iterator arg = F.arg_begin(), aE = F.arg_end();
+		arg != aE; ++ arg )
 	{
-		if(curArg!=A)
+		if ( arg != F.arg_begin() )
 			stream << ", ";
-		printArgName(curArg);
+		
+		if ( alwaysPassedAsRegular &&
+			arg->getType()->isPointerTy() &&
+			!arg->use_empty() &&
+			analyzer.getPointerKind(arg) != REGULAR )
+		{
+			stream << "_t" << demotedArgs.size();
+			demotedArgs.push_back( arg );
+		}
+		else
+			printArgName(arg);
 	}
+
 	stream << ") {" << NewLine;
+	
+	// Now demote the pointers to COMPLETE_OBJECT if necessary
+	if ( alwaysPassedAsRegular )
+	{
+		for ( unsigned i = 0; i < demotedArgs.size(); ++i )
+		{
+			// Function arguments can never be COMPLETE_ARRAYs
+			assert( analyzer.getPointerKind(demotedArgs[i]) == COMPLETE_OBJECT );
+			
+			stream << "var ";
+			printArgName( demotedArgs[i] );
+			stream << " = _t" << i << ".d[_t" << i << ".o]" << NewLine;
+		}
+	}
+	
 	std::map<const BasicBlock*, uint32_t> blocksMap;
 	if(F.size()==1)
 		compileBB(*F.begin(), blocksMap);

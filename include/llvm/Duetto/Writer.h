@@ -119,11 +119,10 @@ private:
 	void printLLVMName(const llvm::StringRef& s, NAME_KIND nameKind) const;
 	void printVarName(const llvm::Value* v);
 	void printArgName(const llvm::Argument* v) const;
-	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE);
-	void compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, llvm::Function::const_arg_iterator arg_it);
+	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, const llvm::Function * = nullptr);
 	void handleBuiltinNamespace(const char* ident, const llvm::Function* calledFunction,
 			llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE);
-	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV, const llvm::Function * f);
+	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
 	void compileMethod(const llvm::Function& F);
 	void compileGlobal(const llvm::GlobalVariable& G);
 	uint32_t compileClassTypeRecursive(const std::string& baseName, llvm::StructType* currentType, uint32_t baseCount);

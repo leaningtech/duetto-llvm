@@ -72,16 +72,6 @@ enum POINTER_KIND {
 	REGULAR
 };
 
-// Functionalities provided by a pointer
-enum POINTER_USAGE_FLAG {
-	POINTER_NONCONST_DEREF = 1, // The pointer is used to modify the pointed object
-	POINTER_ARITHMETIC = (1 << 1), // The pointer can be incremented/decremented etc, and/or it is used to access an array (i.e. p[i])
-	POINTER_ORDINABLE = (1 << 2), // The pointer is used for a comparison with another pointer
-	POINTER_EQUALITY_COMPARABLE = (1 << 3), // The pointer is used for ==/!= comparison with another pointer.
-	POINTER_CASTABLE_TO_INT = (1 << 4),  // The pointer is explicitly casted to an integer (usually used to implement pointers hash table)
-	
-	POINTER_UNKNOWN = (1LL << 32LL) - 1
-};
 
 class DuettoPointerAnalyzer {
 public:
@@ -111,7 +101,17 @@ public:
 #endif //DUETTO_DEBUG_POINTERS
 
 private:
-	
+	// Functionalities provided by a pointer
+	enum POINTER_USAGE_FLAG {
+		POINTER_NONCONST_DEREF = 1, // The pointer is used to modify the pointed object
+		POINTER_ARITHMETIC = (1 << 1), // The pointer can be incremented/decremented etc, and/or it is used to access an array (i.e. p[i])
+		POINTER_ORDINABLE = (1 << 2), // The pointer is used for a comparison with another pointer
+		POINTER_EQUALITY_COMPARABLE = (1 << 3), // The pointer is used for ==/!= comparison with another pointer.
+		POINTER_CASTABLE_TO_INT = (1 << 4),  // The pointer is explicitly casted to an integer (usually used to implement pointers hash table)
+		
+		POINTER_UNKNOWN = (1LL << 32LL) - 1
+	};
+
 	static constexpr uint32_t need_wrap_array_flags = 
 		POINTER_ARITHMETIC | 
 		POINTER_ORDINABLE | 
