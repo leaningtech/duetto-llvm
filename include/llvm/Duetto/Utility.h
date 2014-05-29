@@ -31,7 +31,6 @@ inline bool isValidVoidPtrSource(const llvm::Value* val)
 	return isValidVoidPtrSource(val, visitedPhis);
 }
 
-bool isInlineable(const llvm::Instruction& I);
 bool isBitCast(const llvm::Value* v);
 bool isGEP(const llvm::Value* v);
 uint32_t getIntFromValue(const llvm::Value* v);

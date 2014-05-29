@@ -12,8 +12,8 @@
 #ifndef _DUETTO_WRITER_H
 #define _DUETTO_WRITER_H
 
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Duetto/GlobalDepsAnalyzer.h"
+#include "llvm/Duetto/Inliner.h"
 #include "llvm/Duetto/NameGenerator.h"
 #include "llvm/Duetto/PointerAnalyzer.h"
 #include "llvm/Duetto/SourceMaps.h"
@@ -48,12 +48,12 @@ private:
 
 	llvm::Module& module;
 	llvm::DataLayout targetData;
-	llvm::AliasAnalysis& AA;
 	const llvm::Function* currentFun;
 	
 	NameGenerator namegen;
 	DuettoPointerAnalyzer analyzer;
 	TypeSupport types;
+	Inliner inliner;
 	GlobalDepsAnalyzer globalDeps;
 	std::set<const llvm::GlobalVariable *> compiledGVars;
 	
@@ -142,7 +142,7 @@ public:
 	llvm::raw_ostream& stream;
 	DuettoWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
 		const std::string& sourceMapName, llvm::raw_ostream* sourceMap):
-		module(m),targetData(&m),AA(AA),currentFun(NULL),namegen(),analyzer( namegen ), types(m), globalDeps(m),
+		module(m),targetData(&m),currentFun(NULL),namegen(),analyzer( namegen ), types(m), inliner(AA), globalDeps(m),
 		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
 		stream(s)
 	{

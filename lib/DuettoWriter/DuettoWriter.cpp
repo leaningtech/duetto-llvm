@@ -1207,7 +1207,7 @@ void DuettoWriter::compileOperandImpl(const Value* v)
 		compileConstant(c);
 	else if(const Instruction* it=dyn_cast<Instruction>(v))
 	{
-		if(isInlineable(*it))
+		if(inliner.isInlined(it))
 			compileInlineableInstruction(*cast<Instruction>(v));
 		else
 			printVarName(it);
@@ -1563,34 +1563,6 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableIns
 			compileOperand(ivi.getInsertedValueOperand());
 			return COMPILE_OK;
 		}
-		case Instruction::Load:
-		{
-			const LoadInst& li=static_cast<const LoadInst&>(I);
-			const Value* ptrOp=li.getPointerOperand();
-			stream << "(";
-			if(BitCastInst::classof(ptrOp) &&
-					TypeSupport::isUnion(cast<BitCastInst>(ptrOp)->getOperand(0)->getType()->getPointerElementType()) &&
-					!ArrayType::classof(ptrOp->getType()->getPointerElementType()))
-			{
-				//Optimize loads of single values from unions
-				compileOperand(cast<BitCastInst>(ptrOp)->getOperand(0));
-				Type* pointedType=ptrOp->getType()->getPointerElementType();
-				if(pointedType->isIntegerTy(8))
-					stream << ".getInt8(0)";
-				else if(pointedType->isIntegerTy(16))
-					stream << ".getInt16(0,true)";
-				else if(pointedType->isIntegerTy(32))
-					stream << ".getInt32(0,true)";
-				else if(pointedType->isFloatTy())
-					stream << ".getFloat32(0,true)";
-				else if(pointedType->isDoubleTy())
-					stream << ".getFloat64(0,true)";
-			}
-			else
-				compileDereferencePointer(ptrOp, NULL);
-			stream << ")";
-			return COMPILE_OK;
-		}
 		case Instruction::Store:
 		{
 			const StoreInst& si=static_cast<const StoreInst&>(I);
@@ -1876,6 +1848,34 @@ bool DuettoWriter::compileInlineableInstruction(const Instruction& I)
 {
 	switch(I.getOpcode())
 	{
+		case Instruction::Load:
+		{
+			const LoadInst& li=static_cast<const LoadInst&>(I);
+			const Value* ptrOp=li.getPointerOperand();
+			stream << "(";
+			if(BitCastInst::classof(ptrOp) &&
+					TypeSupport::isUnion(cast<BitCastInst>(ptrOp)->getOperand(0)->getType()->getPointerElementType()) &&
+					!ArrayType::classof(ptrOp->getType()->getPointerElementType()))
+			{
+				//Optimize loads of single values from unions
+				compileOperand(cast<BitCastInst>(ptrOp)->getOperand(0));
+				Type* pointedType=ptrOp->getType()->getPointerElementType();
+				if(pointedType->isIntegerTy(8))
+					stream << ".getInt8(0)";
+				else if(pointedType->isIntegerTy(16))
+					stream << ".getInt16(0,true)";
+				else if(pointedType->isIntegerTy(32))
+					stream << ".getInt32(0,true)";
+				else if(pointedType->isFloatTy())
+					stream << ".getFloat32(0,true)";
+				else if(pointedType->isDoubleTy())
+					stream << ".getFloat64(0,true)";
+			}
+			else
+				compileDereferencePointer(ptrOp, NULL);
+			stream << ")";
+			return true;
+		}
 		case Instruction::BitCast:
 		{
 			const BitCastInst& bi=static_cast<const BitCastInst&>(I);
@@ -2306,7 +2306,7 @@ void DuettoWriter::compileBB(const BasicBlock& BB, const std::map<const BasicBlo
 	BasicBlock::const_iterator IE=BB.end();
 	for(;I!=IE;++I)
 	{
-		if(isInlineable(*I))
+		if( inliner.isInlined(I))
 			continue;
 		if(I->getOpcode()==Instruction::PHI) //Phys are manually handled
 			continue;
