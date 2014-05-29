@@ -50,11 +50,11 @@ private:
 	llvm::DataLayout targetData;
 	const llvm::Function* currentFun;
 	
-	NameGenerator namegen;
-	DuettoPointerAnalyzer analyzer;
 	TypeSupport types;
 	Inliner inliner;
 	GlobalDepsAnalyzer globalDeps;
+	NameGenerator namegen;
+	DuettoPointerAnalyzer analyzer;
 	std::set<const llvm::GlobalVariable *> compiledGVars;
 	
 	// Support for source maps
@@ -116,9 +116,6 @@ private:
 	void compilePointer(const llvm::Value* v, POINTER_KIND acceptedKind);
 	void compileOperandImpl(const llvm::Value* v);
 	enum NAME_KIND { LOCAL=0, GLOBAL=1 };
-	void printLLVMName(const llvm::StringRef& s, NAME_KIND nameKind) const;
-	void printVarName(const llvm::Value* v);
-	void printArgName(const llvm::Argument* v) const;
 	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, const llvm::Function * = nullptr);
 	void handleBuiltinNamespace(const char* ident, const llvm::Function* calledFunction,
 			llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE);
@@ -142,7 +139,7 @@ public:
 	llvm::raw_ostream& stream;
 	DuettoWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
 		const std::string& sourceMapName, llvm::raw_ostream* sourceMap):
-		module(m),targetData(&m),currentFun(NULL),namegen(),analyzer( namegen ), types(m), inliner(AA), globalDeps(m),
+		module(m),targetData(&m),currentFun(NULL), types(m), inliner(AA), globalDeps(m), namegen( globalDeps, inliner), analyzer( namegen ), 
 		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
 		stream(s)
 	{

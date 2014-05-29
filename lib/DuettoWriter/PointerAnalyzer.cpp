@@ -132,15 +132,17 @@ void DuettoPointerAnalyzer::dumpPointer(const Value* v) const
 
 	{
 		std::ostringstream tmp;
-		if (v->hasName())
-			tmp << v->getName().data();
-		else
-			tmp << "tmp" << namegen.getUniqueIndexForValue(v);
+		tmp << namegen.getName(v).data();
 		
-		if (const Argument * arg = dyn_cast<const Argument>(v))
+		if (const Argument * arg = dyn_cast<Argument>(v))
 		{
 			tmp << " arg of function: " << arg->getParent()->getName().data();
 		}
+		else if (const Instruction * inst = dyn_cast<Instruction>(v) )
+		{
+			tmp << " in function: " << inst->getParent()->getParent()->getName().data();
+		}
+		
 		fmt << tmp.str();
 	}
 	

@@ -147,15 +147,11 @@ void DuettoWriter::compileType(Type* t, COMPILE_TYPE_STYLE style)
 		{
 			if(style==LITERAL_OBJ)
 			{
-				stream << "new create";
-				printLLVMName(st->getName(), GLOBAL);
-				stream << "()";
+				stream << "new create" << namegen.getName(st) << "()";
 			}
 			else
 			{
-				stream << "create";
-				printLLVMName(st->getName(), GLOBAL);
-				stream << ".call(this)";
+				stream << "create" << namegen.getName(st) << ".call(this)";
 			}
 			return;
 		}
@@ -194,9 +190,7 @@ void DuettoWriter::compileClassType(StructType* T)
 		return;
 	}
 	//This function is used as a constructor using the new syntax
-	stream << "function create";
-	printLLVMName(T->getName(), GLOBAL);
-	stream << "(){" << NewLine;
+	stream << "function create" << namegen.getName(T) << "(){" << NewLine;
 
 	//TODO: Currently base classes are initialized also during compileTypeImpl
 	//find a way to skip it. It's also necessary to initialize members that require
@@ -225,8 +219,7 @@ void DuettoWriter::compileArrayClassType(StructType* T)
 		llvm::report_fatal_error("Unsupported code found, please report a bug", false);
 		return;
 	}
-	stream << "function createArray";
-	printLLVMName(T->getName(), GLOBAL);
+	stream << "function createArray" << namegen.getName(T);
 	stream << "(size){" << NewLine;
 	stream << "var ret=new Array(size);" << NewLine << "for(var __i__=0;__i__<size;__i__++)" << NewLine;
 	stream << "ret[__i__]=";
