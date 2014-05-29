@@ -80,6 +80,12 @@ public:
 	
 	POINTER_KIND getPointerKind(const llvm::Value* v) const;
 	
+	// Compute the pointer kind of the pointer referenced by the alloca
+	/**
+	 * Useful only if I->getType() is a pointer to pointer
+	 */
+	POINTER_KIND getPointerKindForAlloca(const llvm::AllocaInst *) const;
+	
 	// Detect if every object pointed by this pointer has a .s member
 	bool hasSelfMember(const llvm::Value * v) const;
 	

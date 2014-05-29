@@ -1536,7 +1536,11 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableIns
 			else
 				compileDereferencePointer(ptrOp, NULL);
 			stream << " = ";
-			compileOperand(valOp, REGULAR);
+			
+			if ( const AllocaInst * ai = dyn_cast<AllocaInst>(ptrOp) )
+				compileOperand(valOp, analyzer.getPointerKindForAlloca(ai) );
+			else
+				compileOperand(valOp, REGULAR);
 			return COMPILE_OK;
 		}
 		default:

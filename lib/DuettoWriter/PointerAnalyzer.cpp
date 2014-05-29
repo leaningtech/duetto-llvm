@@ -109,7 +109,31 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 			return iter->second = (getPointerUsageFlagsComplete(v) & need_self_flags) ? REGULAR : COMPLETE_OBJECT;
 		}
 	}
+	
+	if (const LoadInst * li = dyn_cast<LoadInst>(v) )
+	{
+		if (const AllocaInst * ai = dyn_cast<AllocaInst>(li->getPointerOperand() ) )
+			return iter->second = getPointerKindForAlloca(ai);
+	}
 	return iter->second = REGULAR;
+}
+
+POINTER_KIND DuettoPointerAnalyzer::getPointerKindForAlloca(const AllocaInst * ai) const
+{
+	if (getPointerKind(ai) != COMPLETE_OBJECT)
+		return REGULAR;
+	
+	Type * pt = ai->getType()->getElementType();
+	
+	if ( !pt->isPointerTy() )
+		return REGULAR;
+	
+	bool allUsesAreStoresOrLoad = std::all_of( ai->use_begin(), ai->use_end(), [](const Use & u )
+	{
+		return isa<LoadInst>(u.getUser()) || ( isa<StoreInst>(u.getUser()) && u.getOperandNo() == 0 );
+	});
+	
+	return allUsesAreStoresOrLoad ? COMPLETE_OBJECT : REGULAR;
 }
 
 bool DuettoPointerAnalyzer::hasSelfMember(const Value* v) const
