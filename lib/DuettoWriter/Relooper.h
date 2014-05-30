@@ -44,6 +44,9 @@ public:
 	virtual void renderContinue() = 0;
 	virtual void renderContinue(int labelId) = 0;
 	virtual void renderLabel(int labelId) = 0;
+	
+	// Not really necessary, but silents some warnings
+	virtual ~RenderInterface() {}
 };
 
 // Info about a branching from one block to another

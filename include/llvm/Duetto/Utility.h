@@ -21,7 +21,6 @@
 namespace duetto
 {
 
-bool isClientGlobal(const char* mangledName);
 bool isNopCast(const llvm::Value* val);
 bool isValidVoidPtrSource(const llvm::Value* val, std::set<const llvm::PHINode*>& visitedPhis);
 
@@ -44,12 +43,28 @@ public:
 	TypeSupport( const llvm::Module & module ) : module(module) {}
 	
 	static bool isValidTypeCast(const llvm::Value * castOp, llvm::Type * dstPtr);
-	static bool isClientType(const llvm::Type* t);
-	static bool isClientArrayType(const llvm::Type* t);
-	static bool isI32Type(const llvm::Type* t);
-	static bool isTypedArrayType(const llvm::Type* t);
-	static bool isImmutableType(const llvm::Type* t);
-	static bool isUnion(const llvm::Type* t);
+	
+	static bool isClientGlobal(const llvm::GlobalValue & v)
+	{
+		return v.hasName() && (
+			v.getName().startswith("_ZN6client")  ||
+			v.getName().startswith("_ZNK6client") );
+	}
+	
+	static bool isClientType(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() && t->getStructName().startswith("class._ZN6client") );
+	}
+
+	static bool isClientArrayType(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() && t->getStructName().startswith("class._ZN6client5ArrayE") );
+	}
+	
+	static bool isI32Type(llvm::Type* t);
+	static bool isTypedArrayType(llvm::Type* t);
+	static bool isImmutableType(llvm::Type* t);
+	static bool isUnion(llvm::Type* t);
 
 	static llvm::Type* findRealType(const llvm::Value* v)
 	{
@@ -62,7 +77,7 @@ public:
 		return getBasesMetadata(t) != nullptr;
 	}
 
-	bool getBasesInfo(const llvm::StructType* t, uint32_t& firstBase, uint32_t& baseCount) const;
+	bool getBasesInfo(llvm::StructType* t, uint32_t& firstBase, uint32_t& baseCount) const;
 
 private:
 	static llvm::Type* dfsFindRealType(const llvm::Value* v, std::set<const llvm::PHINode*>& visitedPhis);

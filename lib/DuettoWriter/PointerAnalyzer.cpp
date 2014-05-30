@@ -64,7 +64,7 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 	//Follow bitcasts
 	if(isBitCast(v))
 	{
-		const User* bi=static_cast<const User*>(v);
+		const User* bi = cast<User>(v);
 		//Casts from unions return regular pointers
 		if(TypeSupport::isUnion(bi->getOperand(0)->getType()->getPointerElementType()))
 		{
@@ -78,7 +78,7 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 	}
 	if(isNopCast(v))
 	{
-		const User* bi=static_cast<const User*>(v);
+		const User* bi=cast<User>(v);
 		return iter->second = getPointerKind(bi->getOperand(0));
 	}
 	//Follow select
@@ -98,7 +98,7 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 	if (DynamicAllocInfo::getAllocType(v) != DynamicAllocInfo::not_an_alloc )
 		return iter->second = COMPLETE_ARRAY;
 
-	if (isa<const PHINode>(v) || isa<const Argument>(v))
+	if (isa<PHINode>(v) || isa<Argument>(v))
 	{
 		if (TypeSupport::isImmutableType( pt->getElementType() ) )
 		{
@@ -143,6 +143,9 @@ bool DuettoPointerAnalyzer::hasSelfMember(const Value* v) const
 	PointerType * tp = cast<PointerType>(TypeSupport::findRealType(v) );
 
 	if ( TypeSupport::isImmutableType(tp->getElementType()) || !isa<StructType>(tp->getElementType()) )
+		return false;
+	
+	if ( classesWithBaseInfo.count( cast<StructType>( tp->getElementType() ) ) )
 		return false;
 
 	return (getPointerUsageFlagsComplete(v) & need_self_flags);
@@ -275,14 +278,14 @@ uint32_t DuettoPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 		{
 			const User* U = it->getUser();
 			// Check if the pointer "v" is used as "ptr" for a StoreInst. 
-			if (const StoreInst * I = dyn_cast<const StoreInst>(U) )
+			if (const StoreInst * I = dyn_cast<StoreInst>(U) )
 			{
 				if (I->getPointerOperand() == v)
 					ans |= POINTER_NONCONST_DEREF; 
 			}
 			
 			// Check if the pointer "v" is used as lhs or rhs of a comparison operation
-			else if (const CmpInst * I = dyn_cast<const CmpInst>(U) )
+			else if (const CmpInst * I = dyn_cast<CmpInst>(U) )
 			{
 				if (!I->isEquality())
 					ans |= POINTER_ORDINABLE;
@@ -291,7 +294,7 @@ uint32_t DuettoPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 			}
 			
 			// Check if the pointer is casted to int
-			else if (isa<const PtrToIntInst>(U) )
+			else if (isa<PtrToIntInst>(U) )
 			{
 				ans |= POINTER_CASTABLE_TO_INT;
 			}
@@ -299,22 +302,22 @@ uint32_t DuettoPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 			// Pointer used as a base to a getElementPtr
 			else if (isGEP(U) )
 			{
-				const User * I = cast<const User>(U);
-  				const ConstantInt * p = dyn_cast<const ConstantInt>(I->getOperand(1));
+				const User * I = cast<User>(U);
+  				const ConstantInt * p = dyn_cast<ConstantInt>(I->getOperand(1));
 				if (!p || !p->isZero())
 					ans |= POINTER_ARITHMETIC;
 			}
 			/** TODO deal with all use cases and remove the following 2 blocks **/
 			else if (
-				isa<const PHINode>(U) || 
-				isa<const SelectInst>(U) ||
-				isa<const LoadInst>(U) ||
-				isa<const CallInst>(U) ||
-				isa<const InvokeInst>(U) ||
-				isa<const ReturnInst>(U) || 
-				isa<const GlobalValue>(U) ||
-				isa<const ConstantArray>(U) ||
-				isa<const ConstantStruct>(U) ||
+				isa<PHINode>(U) || 
+				isa<SelectInst>(U) ||
+				isa<LoadInst>(U) ||
+				isa<CallInst>(U) ||
+				isa<InvokeInst>(U) ||
+				isa<ReturnInst>(U) || 
+				isa<GlobalValue>(U) ||
+				isa<ConstantArray>(U) ||
+				isa<ConstantStruct>(U) ||
 				isBitCast(U) ||
 				isNopCast(U) )
 			{
@@ -348,28 +351,28 @@ uint32_t DuettoPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, st
 	{
 		const User * U = it->getUser();
 		// Check if "v" is used as a operand in a phi node
-		if (isa<const PHINode>(U) ||
-			isa<const SelectInst>(U) ||
+		if (isa<PHINode>(U) ||
+			isa<SelectInst>(U) ||
 			isBitCast(U) ||
 			isNopCast(U))
 		{
 			f |= dfsPointerUsageFlagsComplete(U, openset);
 		}
-		else if (const CallInst * I = dyn_cast<const CallInst>(U))
+		else if (const CallInst * I = dyn_cast<CallInst>(U))
 		{
 			// Indirect calls require a finer analysis
 			f |= usageFlagsForCall(v,I,openset);
 		}
-		else if (const InvokeInst * I = dyn_cast<const InvokeInst>(U))
+		else if (const InvokeInst * I = dyn_cast<InvokeInst>(U))
 		{
 			f |= usageFlagsForCall(v,I,openset);
 		}
-		else if (isa<const ReturnInst>(U))
+		else if (isa<ReturnInst>(U))
 		{
 			//TODO deal with me properly
 			f |= POINTER_UNKNOWN;
 		}
-		else if (const StoreInst * I = dyn_cast<const StoreInst>(U) )
+		else if (const StoreInst * I = dyn_cast<StoreInst>(U) )
 		{
 			if (I->getValueOperand() == v)
 			{
@@ -381,16 +384,16 @@ uint32_t DuettoPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, st
 			}
 		}
 		else if (
-			isa<const ConstantStruct>(U) ||
-			isa<const ConstantArray>(U) ||
-			isa<const GlobalValue>(U) )
+			isa<ConstantStruct>(U) ||
+			isa<ConstantArray>(U) ||
+			isa<GlobalValue>(U) )
 		{
 			f |= POINTER_UNKNOWN;
 		}
 		else if ( // Things we know are ok
-			isa<const CmpInst>(U) ||
-			isa<const LoadInst>(U) ||
-			isa<const PtrToIntInst>(U) ||
+			isa<CmpInst>(U) ||
+			isa<LoadInst>(U) ||
+			isa<PtrToIntInst>(U) ||
 			isGEP(U) )
 		{
 			continue;

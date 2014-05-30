@@ -76,7 +76,13 @@ enum POINTER_KIND {
 class DuettoPointerAnalyzer {
 public:
 	
-	DuettoPointerAnalyzer( const NameGenerator & namegen ) : namegen(namegen) {}
+	DuettoPointerAnalyzer( 
+		const NameGenerator & namegen,
+		const std::unordered_set<llvm::StructType*> & classesWithBaseInfo) : 
+		
+		namegen(namegen),
+		classesWithBaseInfo(classesWithBaseInfo)
+	{}
 	
 	POINTER_KIND getPointerKind(const llvm::Value* v) const;
 	
@@ -180,6 +186,7 @@ private:
 #endif //DUETTO_DEBUG_POINTERS
 	
 	const NameGenerator & namegen;
+	const std::unordered_set<llvm::StructType*> & classesWithBaseInfo;
 
 };
 

@@ -41,7 +41,12 @@ public:
 	}
 };
 
-llvm::raw_ostream& operator<<(llvm::raw_ostream& s, const NewLineHandler& handler);
+inline llvm::raw_ostream& operator<<(llvm::raw_ostream& s, const NewLineHandler& handler)
+{
+	s << '\n';
+	handler.sourceMapGenerator.finishLine();
+	return s;
+}
 
 /**
  * Black magic to conditionally enable indented output
@@ -136,8 +141,6 @@ private:
 
 class DuettoWriter
 {
-private:
-
 	llvm::Module& module;
 	llvm::DataLayout targetData;
 	const llvm::Function* currentFun;
@@ -154,93 +157,239 @@ private:
 	std::string sourceMapName;
 	const NewLineHandler NewLine;
 
-	void compileTypedArrayType(llvm::Type* t);
+	ostream_proxy stream;
+
+	/**
+	 * \defgroup Instruction Functions used to compile an llvm::Instruction
+	 * @{
+	 */
 	
 	// COMPILE_ADD_SELF is returned by AllocaInst when a self pointer must be added to the returned value
 	// COMPILE_EMPTY is returned if there is no need to add a ;\n to end the line
 	enum COMPILE_INSTRUCTION_FEEDBACK { COMPILE_OK = 0, COMPILE_UNSUPPORTED, COMPILE_ADD_SELF, COMPILE_EMPTY };
-	COMPILE_INSTRUCTION_FEEDBACK compileTerminatorInstruction(const llvm::TerminatorInst& I);
-	COMPILE_INSTRUCTION_FEEDBACK compileTerminatorInstruction(const llvm::TerminatorInst& I,
-			const std::map<const llvm::BasicBlock*, uint32_t>& blocksMap);
-	bool compileInlineableInstruction(const llvm::Instruction& I);
-	void addSelfPointer(const llvm::Value* obj);
-	COMPILE_INSTRUCTION_FEEDBACK compileNotInlineableInstruction(const llvm::Instruction& I);
-	enum COMPILE_FLAG { NORMAL = 0, DRY_RUN = 1, GEP_DIRECT = 2 };
-	llvm::Type* compileRecursiveAccessToGEP(llvm::Type* curType, const llvm::Use* it,
-			const llvm::Use* const itE, COMPILE_FLAG flag);
+	
+	/**
+	 * Compiles a terminator instruction
+	 * 
+	 * Handles:
+	 *   ret, invoke, resume, br, switch, unreachable
+	 * 
+	 * \return true if successful, false if the terminatorinst is not supported.
+	 *   In this case we print a warning message
+	 */
+	bool compileTerminatorInstruction(const llvm::TerminatorInst & I);
+	
+	/**
+	 * Compiles an inlineable instruction
+	 * 
+	 * Handles:
+	 *  load, bitcast, fptosi, fptoui, sitofp, uitofp, getelementptr, 
+	 *  add, fadd, sub, fsub, zext, sdiv, udiv, srem, urem, fdiv, mul, fmul,
+	 *  icmp, fcmp, and, lshr, ashr, shl, or, xor, trunc, sext, select, extractvalue,
+	 *  fpext, fptrunc, ptrtoint, vaarg, 
+	 * 
+	 * \return true if successful, false if the instruction is not supported.
+	 *   In this case we print a warning message
+	 */
+	bool compileInlineableInstruction(const llvm::Instruction & I);
+	
+	/**
+	 * Compiles a not inlineable instruction
+	 * 
+	 * Handles:
+	 *  alloca, call, landingpad, insertvalue, store.
+	 * 
+	 * If not forwards to compileInlineableInstruction
+	 *   
+	 * \pre inliner.isInlined(&I) returns false
+	 * \return COMPILE_ADD_SELF if it is necessary to add a self member to the generated object.
+	 */
+	COMPILE_INSTRUCTION_FEEDBACK compileNotInlineableInstruction(const llvm::Instruction & I);
+	
+	/**
+	 * Compile a argument list, wrapped within '(' and ')'.
+	 * 
+	 * \param it,itE the range of arguments to be compiled.
+	 * \param f If not null, the called function. This is used in direct calls to pass non-regular pointers.
+	 * 
+	 */
+	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, const llvm::Function * f = nullptr);
+	
+	/** @} */
+	
+	/**
+	 * \defgroup Opcodes Function used to compile arithmetic instructions
+	 * @{
+	 * 
+	 * These functions are implemented in Opcodes.cpp
+	 */
+	
+	void compileSignedInteger(const llvm::Value* v);
+	void compileUnsignedInteger(const llvm::Value* v);
 	void compilePredicate(llvm::CmpInst::Predicate p);
 	void compileOperandForIntegerPredicate(const llvm::Value* v, llvm::CmpInst::Predicate p);
-	void compileEqualPointersComparison(const llvm::Value* lhs, const llvm::Value* rhs, llvm::CmpInst::Predicate p);
 	void compileIntegerComparison(const llvm::Value* lhs, const llvm::Value* rhs, llvm::CmpInst::Predicate p);
 	void compilePtrToInt(const llvm::Value* v);
 	void compileSubtraction(const llvm::Value* lhs, const llvm::Value* rhs);
-	enum COMPILE_TYPE_STYLE { LITERAL_OBJ=0, THIS_OBJ };
-	void compileType(llvm::Type* t, COMPILE_TYPE_STYLE style);
-	void compileTypeImpl(llvm::Type* t, COMPILE_TYPE_STYLE style);
 	
-	/*
-	 * \param v The pointer to dereference, it may be a regular pointer, a complete obj or a complete array
-	 * \param offset An offset coming from code, which may be also NULL
-	 * \param namedOffset An offset that will be added verbatim to the code
+	/** @} */
+	
+	/**
+	 * \defgroup Memfuncs Functions used to implement memcpy/malloc et similia
+	 * @{
 	 */
+	
+	void compileAllocation(const DynamicAllocInfo & info);
+	void compileMove(const llvm::Value* dest, const llvm::Value* src, const llvm::Value* size);
+	
+	enum COPY_DIRECTION { FORWARD=0, BACKWARD, RESET };
+	
+	void compileMemFunc(const llvm::Value* dest, const llvm::Value* src, const llvm::Value* size,
+			COPY_DIRECTION copyDirection);
+	
+	void compileCopyRecursive(const std::string& baseName, const llvm::Value* baseDest,
+		const llvm::Value* baseSrc, llvm::Type* currentType, const char* namedOffset);
+	
+	void compileResetRecursive(const std::string& baseName, const llvm::Value* baseDest,
+		const llvm::Value* resetValue, llvm::Type* currentType, const char* namedOffset);
+
+	void compileFree(const llvm::Value* obj);
+	
+	/** @} */
+	
+	/**
+	 * \defgroup Pointers Functions used to compile pointers operations
+	 */
+
+	/**
+	 * Compiles a pointer operand using the given kind.
+	 * 
+	 * This function can syntetize a COMPLETE_OBJECT, COMPLETE_ARRAY or REGULAR
+	 * no matter what the actual kind of the passed value is, provided that such
+	 * demotion/promotion is actually possible.
+	 * 
+	 * \pre v->getType()->isPointerTy();
+	 */
+	void compilePointer(const llvm::Value* v, POINTER_KIND kind);
+	
+	enum COMPILE_FLAG { NORMAL = 0, DRY_RUN = 1, GEP_DIRECT = 2 };
+
+	llvm::Type* compileObjectForPointer(const llvm::Value* val, COMPILE_FLAG flag);
 	void compileDereferencePointer(const llvm::Value* v, const llvm::Value* offset, const char* namedOffset = NULL);
-	void compileGEP(const llvm::Value* val, const llvm::Use* it, const llvm::Use* const itE);
+	bool compileOffsetForPointer(const llvm::Value* val, llvm::Type* lastType);
 	llvm::Type* compileObjectForPointerGEP(const llvm::Value* val, const llvm::Use* it,
 			const llvm::Use* const itE, COMPILE_FLAG flag);
 	bool compileOffsetForPointerGEP(const llvm::Value* val, const llvm::Use* it, const llvm::Use* const itE,
-			llvm::Type* lastType);
-	llvm::Type* compileObjectForPointer(const llvm::Value* val, COMPILE_FLAG flag);
-	/*
-	 * Returns true if anything is printed
+			llvm::Type* lastType);	
+	
+	void compileGEP(const llvm::Value* val, const llvm::Use* it, const llvm::Use* const itE);
+
+	void compileEqualPointersComparison(const llvm::Value* lhs, const llvm::Value* rhs, llvm::CmpInst::Predicate p);
+
+	llvm::Type* compileRecursiveAccessToGEP(llvm::Type* curType, const llvm::Use* it,
+			const llvm::Use* const itE, COMPILE_FLAG flag);
+
+	/** @} */
+	
+	/**
+	 * \defgroup GlobalVars Functions used to compile functions and global variables
+	 * 
+	 * These are the top level functions, called directly from makeJS
+	 * @{
 	 */
-	bool compileOffsetForPointer(const llvm::Value* val, llvm::Type* lastType);
-	void compileMove(const llvm::Value* dest, const llvm::Value* src, const llvm::Value* size);
-	enum COPY_DIRECTION { FORWARD=0, BACKWARD, RESET };
-	void compileMemFunc(const llvm::Value* dest, const llvm::Value* src, const llvm::Value* size,
-			COPY_DIRECTION copyDirection);
-	void compileCopyRecursive(const std::string& baseName, const llvm::Value* baseDest,
-		const llvm::Value* baseSrc, const llvm::Type* currentType, const char* namedOffset);
-	void compileResetRecursive(const std::string& baseName, const llvm::Value* baseDest,
-		const llvm::Value* resetValue, const llvm::Type* currentType, const char* namedOffset);
-	void compileDowncast(const llvm::Value* src, uint32_t baseOffset);
-	void compileAllocation(const DynamicAllocInfo & info);
-	void compileFree(const llvm::Value* obj);
-	void compilePointer(const llvm::Value* v, POINTER_KIND acceptedKind);
-	void compileOperandImpl(const llvm::Value* v);
-	enum NAME_KIND { LOCAL=0, GLOBAL=1 };
-	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, const llvm::Function * = nullptr);
-	void handleBuiltinNamespace(const char* ident, const llvm::Function* calledFunction,
-			llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE);
-	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
+	
 	void compileMethod(const llvm::Function& F);
 	void compileGlobal(const llvm::GlobalVariable& G);
+	void compileNullPtrs();
+	void compileCreateClosure();
+	void compileHandleVAArg();	
+
+	/** @} */
+	
+	/**
+	 * \defgroup Constant Functions used to compile constants and constantexpr
+	 * @{
+	 */
+
+	void compileConstantExpr(const llvm::ConstantExpr* ce);
+	void compileConstant(const llvm::Constant* c );
+
+	/** @} */
+	
+	/** 
+	 * \defgroup Typefunc Functions used to compile classes and typed arrays, and implement inheritance
+	 * 
+	 * These functions are implemented in Types.cpp
+	 * @{
+	 */
+
+	enum COMPILE_TYPE_STYLE { LITERAL_OBJ=0, THIS_OBJ };
+
+	void compileTypedArrayType(llvm::Type* t);
+	void compileTypeImpl(llvm::Type* t, COMPILE_TYPE_STYLE style);	
+	void compileType(llvm::Type* t, COMPILE_TYPE_STYLE style);
 	uint32_t compileClassTypeRecursive(const std::string& baseName, llvm::StructType* currentType, uint32_t baseCount);
 	void compileClassType(llvm::StructType* T);
 	void compileArrayClassType(llvm::StructType* T);
-	void compileArrayPointerType();
-	void compileCreateClosure();
-	void compileHandleVAArg();
-	void compileConstantExpr(const llvm::ConstantExpr* ce);
-	void compileNullPtrs();
-	static uint32_t getMaskForBitWidth(int width);
-	void compileSignedInteger(const llvm::Value* v);
-	void compileUnsignedInteger(const llvm::Value* v);
-	//JS interoperability support
+	void compileArrayPointerType();	
+	
+	/** @} */
+	
+	/**
+	 * \defgroup JSinterop Functions used to support interoperability with JS.
+	 * 
+	 * These functions are implemented in JSInterop.cpp
+	 * @{
+	 */
+	
 	void compileClassesExportedToJs();
+	void handleBuiltinNamespace( llvm::ImmutableCallSite callV );
+
+	/** @} */
+	
+	// Extra stuff not yet categorized
+	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
+	void compileBB(const llvm::BasicBlock& BB, const std::map<const llvm::BasicBlock*, uint32_t>& blocksMap);
+	void compileDowncast(const llvm::Value* src, uint32_t baseOffset);
+	void compileOperand(const llvm::Value* v, POINTER_KIND requestedPointerKind = UNDECIDED);
+	void compileOperandImpl(const llvm::Value* v);
+	void compilePHIOfBlockFromOtherBlock(const llvm::BasicBlock* to, const llvm::BasicBlock* from);
+	void addSelfPointer(const llvm::Value* obj);
+	
+	friend class DuettoRenderInterface;
+	
+	static uint32_t getMaskForBitWidth(int width)
+	{
+		return (1 << width) - 1;
+	}
+	
 public:
-	ostream_proxy stream;
-	DuettoWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
-		const std::string& sourceMapName, llvm::raw_ostream* sourceMap, bool prettyOutput):
-		module(m),targetData(&m),currentFun(NULL), types(m), inliner(AA), globalDeps(m), namegen( globalDeps, inliner, prettyOutput), analyzer( namegen ), 
-		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
-		stream(s, prettyOutput)
+	DuettoWriter(llvm::Module& module, 
+		     llvm::raw_ostream& stream, 
+		     llvm::AliasAnalysis& AA,
+		     const std::string& sourceMapName,
+		     llvm::raw_ostream* sourceMap,
+		     bool prettyOutput) :
+		
+		module(module),
+		targetData( &module ),
+		currentFun(nullptr),
+		
+		types(module),
+		inliner(AA), 
+		globalDeps(module), 
+		namegen( globalDeps, inliner, prettyOutput), 
+		analyzer( namegen, globalDeps.classesWithBaseInfo() ), 
+		
+		sourceMapGenerator(sourceMap,module.getContext()),
+		sourceMapName(sourceMapName),
+		NewLine(sourceMapGenerator),
+		
+		stream(stream, prettyOutput)
 	{
 	}
+
 	void makeJS();
-	void compileBB(const llvm::BasicBlock& BB, const std::map<const llvm::BasicBlock*, uint32_t>& blocksMap);
-	void compileOperand(const llvm::Value* v, POINTER_KIND requestedPointerKind = UNDECIDED);
-	void compileConstant(const llvm::Constant* c);
-	void compilePHIOfBlockFromOtherBlock(const llvm::BasicBlock* to, const llvm::BasicBlock* from);
 };
 
 }

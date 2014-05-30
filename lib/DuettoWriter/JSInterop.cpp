@@ -10,11 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Duetto/Writer.h"
+#include <cstdlib>
 
 using namespace llvm;
 using namespace duetto;
 
-const char* getMethodFromMangledName(StringRef className, const char* name)
+static const char* getMethodFromMangledName(StringRef className, const char* name)
 {
 	if(strncmp(name,"_ZN",3)!=0)
 		return NULL;
@@ -109,5 +110,101 @@ void DuettoWriter::compileClassesExportedToJs()
 			
 			assert( globalDeps.isReachable(f) );
 		}
+	}
+}
+
+void DuettoWriter::handleBuiltinNamespace( ImmutableCallSite callV )
+{
+	auto decode_c = [](const char * it, StringRef & token ) -> const char *
+	{
+		char * end;
+		int length = std::strtol(it, &end, 10);
+
+		token = StringRef(end, length);
+		
+		return end + length;
+	};
+	
+	
+	assert( callV.getCalledFunction() );
+	assert( TypeSupport::isClientGlobal( *callV.getCalledFunction() ) );
+	
+	StringRef identifier = callV.getCalledFunction()->getName();
+	
+	/**
+	 * Parse the mangled identifier
+	 */
+	StringRef namespaceName, className, funcName;
+	
+	// Skip till the first number
+	const char * it = std::find_if(identifier.begin(), identifier.end(), ::isdigit );
+	
+	it = decode_c( it, namespaceName );
+	it = decode_c( it, className );
+	it = decode_c( it, funcName );
+	
+	if ( funcName.empty() )
+	{
+		// Empty funcName means the function is global and className is actually funcName
+		std::swap(className, funcName);
+	}
+	
+	if (funcName.empty() )
+	{
+		llvm::report_fatal_error(Twine("Unexpected C++ mangled name: ", identifier), false);
+		return;
+	}
+	
+	/**
+	 * Handle getter functions
+	 */
+	if( funcName.startswith("get_") && callV.arg_size() == 1 )
+	{
+		//Getter
+		if(className.empty())
+		{
+			llvm::report_fatal_error(Twine("Unexpected getter without class: ", identifier), false);
+			return;
+		}
+		compileOperand( callV.getArgument(0) );
+		stream << "." << funcName.drop_front(4);
+	}
+	/**
+	 * Handle setter functions
+	 */
+	else if( funcName.startswith("set_") && callV.arg_size() == 2 )
+	{
+		if(className.empty())
+		{
+			llvm::report_fatal_error(Twine("Unexpected setter without class: ", identifier), false);
+			return;
+		}
+		compileOperand( callV.getArgument(0) );
+		stream << "." << funcName.drop_front(4) << " = ";
+		compileOperand( callV.getArgument(1) );
+	}
+	else
+	{
+		User::const_op_iterator arg_it = callV.arg_begin();
+		//Regular call
+		if(!className.empty())
+		{
+			bool isClientStatic = callV.getCalledFunction()->hasFnAttribute(Attribute::Static);
+
+			if(isClientStatic)
+				stream << className;
+			else if( callV.arg_empty() )
+			{
+				llvm::report_fatal_error(Twine("At least 'this' parameter was expected: ", identifier), false);
+				return;
+			}
+			else
+			{
+				compileOperand(*arg_it++);
+			}
+			stream << ".";
+		}
+		stream << funcName;
+		compileMethodArgs( arg_it, callV.arg_end(), callV.getCalledFunction());
 	}
 }
