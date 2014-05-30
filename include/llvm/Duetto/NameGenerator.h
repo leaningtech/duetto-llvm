@@ -100,6 +100,8 @@ public:
 	llvm::StringRef getName(const llvm::Value* ) const;
 	llvm::StringRef getName(const llvm::StructType* ) const;
 	
+	bool hasName(const llvm::Value * v) const { return namemap.count(v); }
+	
 	// This will be removed when we will entirely get rid of PHIs.
 	uint32_t getUniqueIndexForPHI(const llvm::Function * f);
 

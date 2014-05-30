@@ -81,24 +81,24 @@ bool isBitCast(const Value* v)
 	if(isa<BitCastInst>(v))
 	{
 		bool validCast = TypeSupport::isValidTypeCast(b->getOperand(0), v->getType());
-		if(!validCast)
-		{
-			llvm::errs() << "Error while handling cast " << *v << "\n";
-			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
-			return false;
-		}
+// 		if(!validCast)
+// 		{
+// 			llvm::errs() << "Error while handling cast " << *v << "\n";
+// 			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
+// 			return false;
+// 		}
 		return true;
 	}
 	const ConstantExpr* ce=dyn_cast<const ConstantExpr>(v);
 	if(ce && ce->getOpcode()==Instruction::BitCast)
 	{
 		bool validCast = TypeSupport::isValidTypeCast(b->getOperand(0), v->getType());
-		if(!validCast)
-		{
-			llvm::errs() << "Error while handling cast " << *v << "\n";
-			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
-			return false;
-		}
+// 		if(!validCast)
+// 		{
+// 			llvm::errs() << "Error while handling cast " << *v << "\n";
+// 			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
+// 			return false;
+// 		}
 		return true;
 	}
 	return false;

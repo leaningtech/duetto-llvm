@@ -113,6 +113,21 @@ public:
 #endif //DUETTO_DEBUG_POINTERS
 
 private:
+	
+	// Strategies to demote a COMPLETE_OBJECT to a REGULAR
+	enum POINTER_DEMOTION_STRATS {
+		NO_DEMOTION, // Not possible (i.e. immutable type or no self member)
+		SELF, // Uses the .s member
+		BASE_INFO // Uses the base info
+	};
+	
+	POINTER_DEMOTION_STRATS getStratForType( llvm::PointerType * pt ) const
+	{
+		if ( llvm::StructType * st = llvm::dyn_cast<llvm::StructType>(pt->getElementType() ) )
+			return classesWithBaseInfo.count(st) ? BASE_INFO : SELF;
+		return NO_DEMOTION;
+	}
+	
 	// Functionalities provided by a pointer
 	enum POINTER_USAGE_FLAG {
 		POINTER_NONCONST_DEREF = 1, // The pointer is used to modify the pointed object

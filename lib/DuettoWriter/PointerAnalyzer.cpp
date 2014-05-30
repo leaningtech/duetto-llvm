@@ -61,6 +61,7 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 		else
 			return iter->second = COMPLETE_OBJECT;
 	}
+
 	//Follow bitcasts
 	if(isBitCast(v))
 	{
@@ -74,12 +75,25 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 			else
 				return iter->second = COMPLETE_ARRAY;
 		}
-		return iter->second = getPointerKind(bi->getOperand(0));
 	}
-	if(isNopCast(v))
+	if ( isBitCast(v) || isNopCast(v) )
 	{
-		const User* bi=cast<User>(v);
-		return iter->second = getPointerKind(bi->getOperand(0));
+		const User* bi = cast<User>(v);
+		
+		assert( bi->getOperand(0)->getType()->isPointerTy() );
+
+		PointerType * toTy = cast<PointerType>(v->getType());
+		PointerType * fromTy = cast<PointerType>(bi->getOperand(0)->getType());
+		
+		if ( (getStratForType( fromTy ) != getStratForType( toTy )) &&
+			! TypeSupport::isClientType(fromTy->getElementType()) &&
+			(getPointerUsageFlagsComplete(bi) & need_self_flags) )
+		{
+			return iter->second = REGULAR;
+		}
+		else
+			return iter->second = getPointerKind(bi->getOperand(0));
+
 	}
 	//Follow select
 	if(const SelectInst* s=dyn_cast<SelectInst>(v))
@@ -159,7 +173,10 @@ void DuettoPointerAnalyzer::dumpPointer(const Value* v) const
 
 	{
 		std::ostringstream tmp;
-		tmp << namegen.getName(v).data();
+		if ( namegen.hasName(v) )
+			tmp << namegen.getName(v).data();
+		else
+			tmp << "unnamed";
 		
 		if (const Argument * arg = dyn_cast<Argument>(v))
 		{

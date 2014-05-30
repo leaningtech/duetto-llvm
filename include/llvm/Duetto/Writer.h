@@ -350,7 +350,7 @@ class DuettoWriter
 	// Extra stuff not yet categorized
 	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
 	void compileBB(const llvm::BasicBlock& BB, const std::map<const llvm::BasicBlock*, uint32_t>& blocksMap);
-	void compileDowncast(const llvm::Value* src, uint32_t baseOffset);
+	void compileDowncast( llvm::ImmutableCallSite );
 	void compileOperand(const llvm::Value* v, POINTER_KIND requestedPointerKind = UNDECIDED);
 	void compileOperandImpl(const llvm::Value* v);
 	void compilePHIOfBlockFromOtherBlock(const llvm::BasicBlock* to, const llvm::BasicBlock* from);

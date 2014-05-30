@@ -148,7 +148,7 @@ bool DuettoWriter::compileInlineableInstruction(const Instruction& I)
 				return true;
 			}
 
-			compileOperand(bi.getOperand(0));
+			compileOperand(bi.getOperand(0), analyzer.getPointerKind(&bi));
 			return true;
 		}
 		case Instruction::FPToSI:
@@ -1536,7 +1536,7 @@ void DuettoWriter::compileConstantExpr(const ConstantExpr* ce)
 				llvm::errs() << "Between:\n\t" << *src << "\n\t" << *dst << "\n";
 				llvm::errs() << "warning: Type conversion is not safe, expect issues. And report a bug.\n";
 			}
-			compileOperand(val);
+			compileOperand(val, analyzer.getPointerKind(ce));
 			break;
 		}
 		case Instruction::IntToPtr:
@@ -1727,17 +1727,17 @@ DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::handleBuiltinCall(Immut
 	}
 	else if(instrinsicId==Intrinsic::duetto_downcast)
 	{
-		compileDowncast(*(it), getIntFromValue(*(it+1)));
+		compileDowncast( callV );
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::duetto_upcast_collapsed)
 	{
-		compileOperand(*it);
+		compileOperand(*it, analyzer.getPointerKind(callV.getInstruction()));
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::duetto_cast_user)
 	{
-		compileOperand(*it);
+		compileOperand(*it, analyzer.getPointerKind(callV.getInstruction()));
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::duetto_pointer_base)
@@ -1873,13 +1873,17 @@ void DuettoWriter::compileBB(const BasicBlock& BB, const std::map<const BasicBlo
 	//At the end of the block
 }
 
-void DuettoWriter::compileDowncast(const Value* src, uint32_t baseOffset)
+void DuettoWriter::compileDowncast(ImmutableCallSite callV)
 {
+	const Value* src = callV.getArgument(0);
+	uint32_t baseOffset = getIntFromValue( callV.getArgument(1));
+
 	Type* t=src->getType()->getPointerElementType();
 	if(types.isClientType(t) || baseOffset==0)
-		compileOperand(src);
+		compileOperand(src, analyzer.getPointerKind(callV.getInstruction()));
 	else
 	{
+		assert( analyzer.getPointerKind(callV.getInstruction()) == REGULAR );
 		//Do a runtime downcast
 		stream << "{d:";
 		compileDereferencePointer(src, NULL);
