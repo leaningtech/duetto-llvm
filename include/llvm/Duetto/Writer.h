@@ -25,6 +25,7 @@
 #include "llvm/Support/FormattedStream.h"
 #include <set>
 #include <map>
+#include <type_traits>
 
 namespace duetto
 {
@@ -41,6 +42,97 @@ public:
 };
 
 llvm::raw_ostream& operator<<(llvm::raw_ostream& s, const NewLineHandler& handler);
+
+/**
+ * Black magic to conditionally enable indented output
+ */
+class ostream_proxy
+{
+public:
+	ostream_proxy( llvm::raw_ostream & s, bool readableOutput = false ) : 
+		stream(s),
+		readableOutput(readableOutput)
+	{}
+
+	friend ostream_proxy& operator<<( ostream_proxy & os, char c )
+	{
+		os.write_indent(c);
+		os.stream << c;
+		return os;
+	}
+
+	friend ostream_proxy& operator<<( ostream_proxy & os, llvm::StringRef s )
+	{
+		os.write_indent(s);
+		os.stream << s;
+		return os;
+	}
+
+	friend ostream_proxy& operator<<( ostream_proxy & os, const NewLineHandler& handler)
+	{
+		os.stream << handler;
+		os.newLine = true;
+		return os;
+	}
+
+	template<class T>
+	friend typename std::enable_if<
+		!std::is_convertible<T&&, llvm::StringRef>::value, // Use this only if T is not convertible to StringRef
+		ostream_proxy&>::type operator<<( ostream_proxy & os, T && t )
+	{
+		os.newLine = false;
+		os.stream << std::forward<T>(t);
+		return os;
+	}
+
+	template<class T1, class T2>
+	void write( T1 && t1, T2 && t2 )
+	{
+		stream.write( std::forward<T1>(t1), std::forward<T2>(t2) );
+	}
+
+private:
+
+	static int countIndent( char c ) {
+		if ( c == '{') return 1;
+		else if ( c == '}') return -1;
+		return 0;
+	}
+
+	static int countIndent( llvm::StringRef s) {
+		int ans = 0;
+		for ( char c : s ) ans+= countIndent(c);
+		return ans;
+	}
+
+	template<class T>
+	void write_indent(T && t) 
+	{
+		if ( readableOutput )
+		{
+			int ni = countIndent(t);
+			
+			if (ni < 0)
+				indentLevel+=ni;
+			
+			if ( newLine )
+			{
+				for ( int i = 0; i < indentLevel; i++ )
+					stream << '\t';
+			}
+			
+			if (ni > 0)
+				indentLevel+=ni;
+		}
+		
+		newLine = false;
+	}
+
+	llvm::raw_ostream & stream;
+	bool readableOutput;
+	bool newLine = false;
+	int indentLevel = 0;
+};
 
 class DuettoWriter
 {
@@ -136,12 +228,12 @@ private:
 	//JS interoperability support
 	void compileClassesExportedToJs();
 public:
-	llvm::raw_ostream& stream;
+	ostream_proxy stream;
 	DuettoWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
-		const std::string& sourceMapName, llvm::raw_ostream* sourceMap):
-		module(m),targetData(&m),currentFun(NULL), types(m), inliner(AA), globalDeps(m), namegen( globalDeps, inliner), analyzer( namegen ), 
+		const std::string& sourceMapName, llvm::raw_ostream* sourceMap, bool prettyOutput):
+		module(m),targetData(&m),currentFun(NULL), types(m), inliner(AA), globalDeps(m), namegen( globalDeps, inliner, prettyOutput), analyzer( namegen ), 
 		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
-		stream(s)
+		stream(s, prettyOutput)
 	{
 	}
 	void makeJS();
