@@ -129,11 +129,6 @@ bool DuettoWriter::compileInlineableInstruction(const Instruction& I)
 			const BitCastInst & bi = cast<BitCastInst>(I);
 			Type* src=bi.getSrcTy();
 			Type* dst=bi.getDestTy();
-			if(!TypeSupport::isValidTypeCast(bi.getOperand(0), dst))
-			{
-				llvm::errs() << "Between:\n\t" << *src << "\n\t" << *dst << "\n";
-				llvm::errs() << "warning: Type conversion is not safe, expect issues. And report a bug.\n";
-			}
 			//Special case unions
 			if(src->isPointerTy() && TypeSupport::isUnion(src->getPointerElementType()))
 			{
@@ -1529,13 +1524,6 @@ void DuettoWriter::compileConstantExpr(const ConstantExpr* ce)
 		case Instruction::BitCast:
 		{
 			Value* val=ce->getOperand(0);
-			Type* dst=ce->getType();
-			Type* src=val->getType();
-			if(!types.isValidTypeCast(val, dst) )
-			{
-				llvm::errs() << "Between:\n\t" << *src << "\n\t" << *dst << "\n";
-				llvm::errs() << "warning: Type conversion is not safe, expect issues. And report a bug.\n";
-			}
 			compileOperand(val, analyzer.getPointerKind(ce));
 			break;
 		}
