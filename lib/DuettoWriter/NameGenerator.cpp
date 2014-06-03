@@ -47,6 +47,8 @@ struct JSSymbols
 			s != "nullObj" &&
 			s != "null" &&
 			s != "nullArray" &&
+			! s.startswith("L") && // Relooper labels
+			s != "label" && 
 			! s.startswith("_t"); //_t reserved for argument kind conversion
 			
 			// Technically we should add also the duetto-generated functions, like createArray, etc

@@ -112,6 +112,13 @@ bool Inliner::isInlineable(const Instruction * I) const
 
 bool Inliner::isLoadInlineable(const LoadInst * I) const
 {
+	/***
+	 * FIXME we need other tests before roll out the real code
+	 */
+	
+	return false;
+	
+	/*
 	if (I->isUsedOutsideOfBlock( I->getParent() ) )
 		return false;
 
@@ -151,7 +158,7 @@ bool Inliner::isLoadInlineable(const LoadInst * I) const
 		if (p && (AA.alias( val, p ) != AliasAnalysis::NoAlias ) )
 			return false;
 	}
-	return true;
+	return true;*/
 }
 
 bool Inliner::isBitCastInlineable(const BitCastInst * BI) const

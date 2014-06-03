@@ -61,15 +61,29 @@ public:
 		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() && t->getStructName().startswith("class._ZN6client5ArrayE") );
 	}
 	
-	static bool isI32Type(llvm::Type* t);
-	static bool isTypedArrayType(llvm::Type* t);
-	static bool isImmutableType(llvm::Type* t);
-	static bool isUnion(llvm::Type* t);
-
-	static llvm::Type* findRealType(const llvm::Value* v)
+	static bool isI32Type(llvm::Type* t)
 	{
-		 std::set<const llvm::PHINode*> visitedPhis;
-		 return dfsFindRealType(v, visitedPhis);
+		return t->isIntegerTy() && llvm::cast<llvm::IntegerType>(t)->getBitWidth()==32;
+	}
+
+	static bool isTypedArrayType(llvm::Type* t)
+	{
+		return t->isIntegerTy(8) || t->isIntegerTy(16) || t->isIntegerTy(32) ||
+			t->isFloatTy() || t->isDoubleTy();
+	}
+
+	static bool isImmutableType(llvm::Type* t)
+	{
+		if(t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isPointerTy())
+			return true;
+		return false;
+	}
+
+	static bool isUnion(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() &&
+			t->getStructName().startswith("union."));
+
 	}
 
 	bool hasBasesInfo(const llvm::StructType* t) const
@@ -80,7 +94,6 @@ public:
 	bool getBasesInfo(llvm::StructType* t, uint32_t& firstBase, uint32_t& baseCount) const;
 
 private:
-	static llvm::Type* dfsFindRealType(const llvm::Value* v, std::set<const llvm::PHINode*>& visitedPhis);
 	const llvm::NamedMDNode* getBasesMetadata(const llvm::StructType * t) const;
 	static bool safeCallForNewedMemory(const llvm::CallInst* ci);
 

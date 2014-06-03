@@ -152,9 +152,9 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKindForAlloca(const AllocaInst * a
 
 bool DuettoPointerAnalyzer::hasSelfMember(const Value* v) const
 {
-	assert( TypeSupport::findRealType(v)->isPointerTy() );
+	assert( v->getType()->isPointerTy() );
 	
-	PointerType * tp = cast<PointerType>(TypeSupport::findRealType(v) );
+	PointerType * tp = cast<PointerType>(v->getType() );
 
 	if ( TypeSupport::isImmutableType(tp->getElementType()) || !isa<StructType>(tp->getElementType()) )
 		return false;
