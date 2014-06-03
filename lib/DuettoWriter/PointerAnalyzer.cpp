@@ -116,7 +116,7 @@ POINTER_KIND DuettoPointerAnalyzer::getPointerKind(const Value* v) const
 	{
 		if (TypeSupport::isImmutableType( pt->getElementType() ) )
 		{
-			return iter->second = needsWrappingArray(v)? REGULAR : COMPLETE_OBJECT;
+			return iter->second = REGULAR;
 		}
 		else
 		{
