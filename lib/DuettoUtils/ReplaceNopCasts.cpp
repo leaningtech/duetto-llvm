@@ -13,6 +13,7 @@
 #include "llvm/Duetto/ReplaceNopCasts.h"
 #include "llvm/Duetto/Utility.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Support/FormattedStream.h"
 
@@ -23,7 +24,8 @@ using namespace duetto;
 bool ReplaceNopCasts::runOnModule(Module & M)
 {
 	constantExprDone.clear();
-	
+	llvm::errs() << "Running replace nop casts pass\n";
+
 	for ( const GlobalVariable & GV : M.globals() )
 	{
 		if ( GV.hasInitializer() )
@@ -32,13 +34,17 @@ bool ReplaceNopCasts::runOnModule(Module & M)
 				processConstexpr(expr);
 		}
 	}
-	
+
 	bool Changed = false;
 
 	for ( Function & F : M )
 	{
+		if ( F.empty() ) continue;
+
 		for ( BasicBlock & BB : F )
 			Changed |= processBasicBlock(BB);
+		
+		assert( ! verifyFunction(F, &llvm::errs()) );
 	}
 
 	return Changed;
@@ -47,6 +53,10 @@ bool ReplaceNopCasts::runOnModule(Module & M)
 bool ReplaceNopCasts::processBasicBlock(BasicBlock& BB)
 {
 	bool Changed = false;
+	
+	/**
+	 * First pass: replace nopCasts with bitcasts and report warning for invalid type casts
+	 */
 	for ( BasicBlock::iterator it = BB.begin(); it != BB.end(); )
 	{
 		Instruction * Inst = it++;
@@ -75,6 +85,24 @@ bool ReplaceNopCasts::processBasicBlock(BasicBlock& BB)
 			}
 		}
 	}
+	
+	/**
+	 * Second pass: collapse bitcasts of bitcasts.
+	 * 
+	 * Note: this might leave some dead instruction around, but we don't care since bitcasts are inlined anyway
+	 */
+	for ( BasicBlock::iterator it = BB.begin(); it != BB.end(); ++it )
+	{
+		if ( isa<BitCastInst>(it) ) 
+		{
+			while ( BitCastInst * src = dyn_cast<BitCastInst>(it->getOperand(0) ) )
+			{
+				it->setOperand(0, src->getOperand(0) );
+				Changed = true;
+			}
+		}
+	}
+
 	return Changed;
 }
 

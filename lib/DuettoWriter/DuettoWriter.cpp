@@ -534,6 +534,7 @@ bool DuettoWriter::compileInlineableInstruction(const Instruction& I)
 
 DuettoWriter::COMPILE_INSTRUCTION_FEEDBACK DuettoWriter::compileNotInlineableInstruction(const Instruction & I)
 {
+	currentInst = &I;
 	assert( !inliner.isInlined(&I) );
 	switch(I.getOpcode())
 	{
@@ -880,17 +881,23 @@ bool DuettoWriter::compileOffsetForPointer(const Value* val, Type* lastType)
 
 	if(analyzer.getPointerKind(val) == COMPLETE_OBJECT)
 	{
-		// Objects with the downcast array uses it directly, not the self pointer
-		if( isa<StructType>(val->getType()->getPointerElementType()) &&
-			globalDeps.classesWithBaseInfo().count(cast<StructType>(val->getType()->getPointerElementType())))
+		if(StructType * st = dyn_cast<StructType>(val->getType()->getPointerElementType()) )
 		{
-			stream << '0';
+			// Objects with the downcast array uses it directly, not the self pointer
+			if ( globalDeps.classesWithBaseInfo().count(st) )
+			{
+				stream << '0';
+			}
+			else
+			{
+				assert ( analyzer.hasSelfMember(val) );
+				stream << "'s'";
+			}
 		}
 		else
 		{
-			//Print the regular "s" offset for complete objects
-			assert(analyzer.hasSelfMember(val) );
-			stream << "'s'";
+			assert( val->getType()->getPointerElementType()->isArrayTy() || (val->dump(), currentInst->dump(), true) );
+			stream << '0';
 		}
 		return true;
 	}

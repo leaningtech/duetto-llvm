@@ -23,8 +23,6 @@
 namespace duetto {
 
 /**
- * \addtogroup pointers Pointer implementation
- * \note Functions belonging to this group are implemented in Pointers.cpp
  * 
  * Three type of pointers are used:
  *   - COMPLETE_OBJECT This pointer can point only to a C++ struct/class type. It is implemented 
@@ -61,9 +59,7 @@ namespace duetto {
  * Optimization:
  *    - no-self-pointer. Avoid the creation of the member ".s" if the conversion to REGULAR pointer is not required, \sa{isNoSelfPointerOptimizable}.
  *    - no-wrapping-array. Avoid the creation of a wrapping array for immutable types if possible, \sa{isNoWrappingArrayOptimizable}.
- * 
- * @{
-*/
+ */
 
 enum POINTER_KIND {
 	UNDECIDED = 0,
@@ -204,8 +200,6 @@ private:
 	const std::unordered_set<llvm::StructType*> & classesWithBaseInfo;
 
 };
-
-/** @} */
 
 }
 

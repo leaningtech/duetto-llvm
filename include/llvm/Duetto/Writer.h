@@ -143,6 +143,7 @@ class DuettoWriter
 {
 	llvm::Module& module;
 	llvm::DataLayout targetData;
+	const llvm::Instruction* currentInst;
 	const llvm::Function* currentFun;
 	
 	TypeSupport types;

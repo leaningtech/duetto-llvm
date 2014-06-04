@@ -142,6 +142,20 @@ void DuettoWriter::compileMove(const Value* dest, const Value* src, const Value*
 void DuettoWriter::compileMemFunc(const Value* dest, const Value* src, const Value* size,
 		COPY_DIRECTION copyDirection)
 {
+	// HACK screw you, bitcast!
+// 	if ( isBitCast(dest) )
+// 	{
+// 		assert( isa<User>(dest) );
+// 		const User * u = cast<User>(dest);
+// 		dest = u->getOperand(0);
+// 	}
+// 	if ( isBitCast(src) )
+// 	{
+// 		assert( isa<User>(src) );
+// 		const User * u = cast<User>(src);
+// 		src = u->getOperand(0);
+// 	}
+	
 	Type* destType=dest->getType();
 
 	Type* pointedType = cast<PointerType>(destType)->getElementType();
