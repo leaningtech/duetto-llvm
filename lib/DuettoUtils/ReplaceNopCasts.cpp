@@ -24,7 +24,6 @@ using namespace duetto;
 bool ReplaceNopCasts::runOnModule(Module & M)
 {
 	constantExprDone.clear();
-	llvm::errs() << "Running replace nop casts pass\n";
 
 	for ( const GlobalVariable & GV : M.globals() )
 	{
@@ -66,6 +65,17 @@ bool ReplaceNopCasts::processBasicBlock(BasicBlock& BB)
 			assert( isa<CallInst>(Inst) );
 			
 			CallInst * call = cast<CallInst>(Inst);
+			
+			if ( TypeSupport::isClientType( call->getType()) )
+			{
+				llvm::errs() << "Cast of client type: " << *call << "\n";
+				continue;
+			}
+			if ( TypeSupport::isClientType( call->getArgOperand(0)->getType()) )
+			{
+				llvm::errs() << "Cast of client type: " << *call->getArgOperand(0) << "\n";
+				continue;
+			}
 			
 			ReplaceInstWithInst( call,  BitCastInst::Create( Instruction::CastOps::BitCast, call->getArgOperand(0), call->getType() ) );
 
