@@ -308,7 +308,7 @@ void CheerpWriter::compileResetRecursive(const std::string& baseName, const Valu
 void CheerpWriter::compileDowncast( ImmutableCallSite callV )
 {
 	assert( callV.arg_size() == 2 );
-	assert( callV.getCalledFunction() && callV.getCalledFunction()->getIntrinsicID() == Intrinsic::duetto_downcast);
+	assert( callV.getCalledFunction() && callV.getCalledFunction()->getIntrinsicID() == Intrinsic::cheerp_downcast);
 
 	const Value * src = callV.getArgument(0);
 	uint32_t baseOffset = getIntFromValue( callV.getArgument(1));
@@ -1693,16 +1693,18 @@ bool CheerpWriter::compileOffsetForPointer(const Value* val, Type* lastType)
 	if(analyzer.getPointerKind(val) == COMPLETE_OBJECT)
 	{
 		// Objects with the downcast array uses it directly, not the self pointer
-		if(types.hasBasesInfo( val->getType()->getPointerElementType()) )
+		if ( StructType * st = dyn_cast<StructType>( val->getType()->getPointerElementType() ) )
 		{
-			stream << '0';
+			if(types.hasBasesInfo( st ) )
+			{
+				stream << '0';
+				return true;
+			}
 		}
-		else
-		{
-			//Print the regular "s" offset for complete objects
-			assert(analyzer.hasSelfMember(val) );
-			stream << "'s'";
-		}
+
+		assert( analyzer.hasSelfMember(val) );
+		stream << "'s'";
+
 		return true;
 	}
 	else if(analyzer.getPointerKind(val)==COMPLETE_ARRAY)
