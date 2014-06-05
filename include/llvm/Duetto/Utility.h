@@ -21,7 +21,6 @@
 namespace duetto
 {
 
-bool isClientGlobal(const char* mangledName);
 bool isNopCast(const llvm::Value* val);
 bool isValidVoidPtrSource(const llvm::Value* val, std::set<const llvm::PHINode*>& visitedPhis);
 
@@ -31,7 +30,6 @@ inline bool isValidVoidPtrSource(const llvm::Value* val)
 	return isValidVoidPtrSource(val, visitedPhis);
 }
 
-bool isInlineable(const llvm::Instruction& I);
 bool isBitCast(const llvm::Value* v);
 bool isGEP(const llvm::Value* v);
 uint32_t getIntFromValue(const llvm::Value* v);
@@ -45,17 +43,47 @@ public:
 	TypeSupport( const llvm::Module & module ) : module(module) {}
 	
 	static bool isValidTypeCast(const llvm::Value * castOp, llvm::Type * dstPtr);
-	static bool isClientType(const llvm::Type* t);
-	static bool isClientArrayType(const llvm::Type* t);
-	static bool isI32Type(const llvm::Type* t);
-	static bool isTypedArrayType(const llvm::Type* t);
-	static bool isImmutableType(const llvm::Type* t);
-	static bool isUnion(const llvm::Type* t);
-
-	static llvm::Type* findRealType(const llvm::Value* v)
+	
+	static bool isClientGlobal(const llvm::GlobalValue & v)
 	{
-		 std::set<const llvm::PHINode*> visitedPhis;
-		 return dfsFindRealType(v, visitedPhis);
+		return v.hasName() && (
+			v.getName().startswith("_ZN6client")  ||
+			v.getName().startswith("_ZNK6client") );
+	}
+	
+	static bool isClientType(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() && t->getStructName().startswith("class._ZN6client") );
+	}
+
+	static bool isClientArrayType(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() && t->getStructName().startswith("class._ZN6client5ArrayE") );
+	}
+	
+	static bool isI32Type(llvm::Type* t)
+	{
+		return t->isIntegerTy() && llvm::cast<llvm::IntegerType>(t)->getBitWidth()==32;
+	}
+
+	static bool isTypedArrayType(llvm::Type* t)
+	{
+		return t->isIntegerTy(8) || t->isIntegerTy(16) || t->isIntegerTy(32) ||
+			t->isFloatTy() || t->isDoubleTy();
+	}
+
+	static bool isImmutableType(llvm::Type* t)
+	{
+		if(t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isPointerTy())
+			return true;
+		return false;
+	}
+
+	static bool isUnion(llvm::Type* t)
+	{
+		return (t->isStructTy() && llvm::cast<llvm::StructType>(t)->hasName() &&
+			t->getStructName().startswith("union."));
+
 	}
 
 	bool hasBasesInfo(const llvm::StructType* t) const
@@ -63,10 +91,9 @@ public:
 		return getBasesMetadata(t) != nullptr;
 	}
 
-	bool getBasesInfo(const llvm::StructType* t, uint32_t& firstBase, uint32_t& baseCount) const;
+	bool getBasesInfo(llvm::StructType* t, uint32_t& firstBase, uint32_t& baseCount) const;
 
 private:
-	static llvm::Type* dfsFindRealType(const llvm::Value* v, std::set<const llvm::PHINode*>& visitedPhis);
 	const llvm::NamedMDNode* getBasesMetadata(const llvm::StructType * t) const;
 	static bool safeCallForNewedMemory(const llvm::CallInst* ci);
 

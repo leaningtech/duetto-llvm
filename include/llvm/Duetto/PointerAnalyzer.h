@@ -23,8 +23,6 @@
 namespace duetto {
 
 /**
- * \addtogroup pointers Pointer implementation
- * \note Functions belonging to this group are implemented in Pointers.cpp
  * 
  * Three type of pointers are used:
  *   - COMPLETE_OBJECT This pointer can point only to a C++ struct/class type. It is implemented 
@@ -61,9 +59,7 @@ namespace duetto {
  * Optimization:
  *    - no-self-pointer. Avoid the creation of the member ".s" if the conversion to REGULAR pointer is not required, \sa{isNoSelfPointerOptimizable}.
  *    - no-wrapping-array. Avoid the creation of a wrapping array for immutable types if possible, \sa{isNoWrappingArrayOptimizable}.
- * 
- * @{
-*/
+ */
 
 enum POINTER_KIND {
 	UNDECIDED = 0,
@@ -72,23 +68,25 @@ enum POINTER_KIND {
 	REGULAR
 };
 
-// Functionalities provided by a pointer
-enum POINTER_USAGE_FLAG {
-	POINTER_NONCONST_DEREF = 1, // The pointer is used to modify the pointed object
-	POINTER_ARITHMETIC = (1 << 1), // The pointer can be incremented/decremented etc, and/or it is used to access an array (i.e. p[i])
-	POINTER_ORDINABLE = (1 << 2), // The pointer is used for a comparison with another pointer
-	POINTER_EQUALITY_COMPARABLE = (1 << 3), // The pointer is used for ==/!= comparison with another pointer.
-	POINTER_CASTABLE_TO_INT = (1 << 4),  // The pointer is explicitly casted to an integer (usually used to implement pointers hash table)
-	
-	POINTER_UNKNOWN = (1LL << 32LL) - 1
-};
 
 class DuettoPointerAnalyzer {
 public:
 	
-	DuettoPointerAnalyzer( NameGenerator & namegen ) : namegen(namegen) {}
+	DuettoPointerAnalyzer( 
+		const NameGenerator & namegen,
+		const std::unordered_set<llvm::StructType*> & classesWithBaseInfo) : 
+		
+		namegen(namegen),
+		classesWithBaseInfo(classesWithBaseInfo)
+	{}
 	
 	POINTER_KIND getPointerKind(const llvm::Value* v) const;
+	
+	// Compute the pointer kind of the pointer referenced by the alloca
+	/**
+	 * Useful only if I->getType() is a pointer to pointer
+	 */
+	POINTER_KIND getPointerKindForAlloca(const llvm::AllocaInst *) const;
 	
 	// Detect if every object pointed by this pointer has a .s member
 	bool hasSelfMember(const llvm::Value * v) const;
@@ -112,6 +110,31 @@ public:
 
 private:
 	
+	// Strategies to demote a COMPLETE_OBJECT to a REGULAR
+	enum POINTER_DEMOTION_STRATS {
+		NO_DEMOTION, // Not possible (i.e. immutable type or no self member)
+		SELF, // Uses the .s member
+		BASE_INFO // Uses the base info
+	};
+	
+	POINTER_DEMOTION_STRATS getStratForType( llvm::PointerType * pt ) const
+	{
+		if ( llvm::StructType * st = llvm::dyn_cast<llvm::StructType>(pt->getElementType() ) )
+			return classesWithBaseInfo.count(st) ? BASE_INFO : SELF;
+		return NO_DEMOTION;
+	}
+	
+	// Functionalities provided by a pointer
+	enum POINTER_USAGE_FLAG {
+		POINTER_NONCONST_DEREF = 1, // The pointer is used to modify the pointed object
+		POINTER_ARITHMETIC = (1 << 1), // The pointer can be incremented/decremented etc, and/or it is used to access an array (i.e. p[i])
+		POINTER_ORDINABLE = (1 << 2), // The pointer is used for a comparison with another pointer
+		POINTER_EQUALITY_COMPARABLE = (1 << 3), // The pointer is used for ==/!= comparison with another pointer.
+		POINTER_CASTABLE_TO_INT = (1 << 4),  // The pointer is explicitly casted to an integer (usually used to implement pointers hash table)
+		
+		POINTER_UNKNOWN = (1LL << 32LL) - 1
+	};
+
 	static constexpr uint32_t need_wrap_array_flags = 
 		POINTER_ARITHMETIC | 
 		POINTER_ORDINABLE | 
@@ -174,10 +197,9 @@ private:
 #endif //DUETTO_DEBUG_POINTERS
 	
 	const NameGenerator & namegen;
+	const std::unordered_set<llvm::StructType*> & classesWithBaseInfo;
 
 };
-
-/** @} */
 
 }
 

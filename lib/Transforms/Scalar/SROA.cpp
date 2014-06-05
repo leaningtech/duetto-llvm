@@ -388,6 +388,8 @@ private:
   }
 
   void visitBitCastInst(BitCastInst &BC) {
+    //HACK required by the replace nop cast pass
+	  return markAsDead(BC);
     if (BC.use_empty())
       return markAsDead(BC);
 
@@ -2248,7 +2250,9 @@ private:
                                 LI.isVolatile(), LI.getName());
     } else {
       Type *LTy = TargetTy->getPointerTo();
-      V = IRB.CreateAlignedLoad(getNewAllocaSlicePtr(IRB, LTy),
+      auto db = getNewAllocaSlicePtr(IRB, LTy);
+      assert( db || (LI.dump(), LI.getParent()->dump(), false ) );
+      V = IRB.CreateAlignedLoad(db,
                                 getSliceAlign(TargetTy), LI.isVolatile(),
                                 LI.getName());
       IsPtrAdjusted = true;

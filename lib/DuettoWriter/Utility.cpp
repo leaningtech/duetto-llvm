@@ -24,11 +24,6 @@ using namespace llvm;
 
 namespace duetto {
 
-bool isClientGlobal(const char* mangledName)
-{
-	return strncmp(mangledName,"_ZN6client",10)==0;
-}
-
 bool isNopCast(const Value* val)
 {
 	const CallInst * newCall = dyn_cast<const CallInst>(val);
@@ -80,135 +75,11 @@ bool isValidVoidPtrSource(const Value* val, std::set<const PHINode*>& visitedPhi
 	return false;
 }
 
-bool isInlineable(const Instruction& I)
-{
-	//Inlining a variable used by a PHI it's unsafe
-	//When the phi's are computed the result
-	//correctness may depend on the order they are
-	//computed. Check all uses
-	Value::const_use_iterator it=I.use_begin();
-	Value::const_use_iterator itE=I.use_end();
-	for(;it!=itE;++it)
-	{
-		if(PHINode::classof(it->getUser()))
-			return false;
-	}
-	//Beside a few cases, instructions with a single use may be inlined
-	//TODO: Find out a better heuristic for inlining, it seems that computing
-	//may be faster even on more than 1 use
-	if(I.getOpcode()==Instruction::GetElementPtr)
-	{
-		//Special case GEPs. They should always be inline since creating the object is really slow
-		return true;
-	}
-	else if(I.getOpcode()==Instruction::BitCast)
-	{
-		//Inline casts which are not unions
-		llvm::Type* src=I.getOperand(0)->getType();
-		if(!src->isPointerTy() || !TypeSupport::isUnion(src->getPointerElementType()))
-			return true;
-		Type* pointedType=src->getPointerElementType();
-		//Do not inline union casts to array
-		if(ArrayType::classof(pointedType))
-			return false;
-		//Inline if the only uses are load and stores
-		Value::const_use_iterator it=I.use_begin();
-		Value::const_use_iterator itE=I.use_end();
-		for(;it!=itE;++it)
-		{
-			if(!LoadInst::classof(it->getUser()) && !StoreInst::classof(it->getUser()))
-				return false;
-		}
-		return true;
-	}
-	else if(I.hasOneUse())
-	{
-		//A few opcodes needs to be executed anyway as they
-		//do not operated on registers
-		switch(I.getOpcode())
-		{
-			case Instruction::Call:
-			case Instruction::Invoke:
-			case Instruction::Ret:
-			case Instruction::LandingPad:
-			case Instruction::PHI:
-			case Instruction::Load:
-			case Instruction::Store:
-			case Instruction::InsertValue:
-			case Instruction::Resume:
-			case Instruction::Br:
-			case Instruction::Alloca:
-			case Instruction::Switch:
-			case Instruction::Unreachable:
-			case Instruction::VAArg:
-				return false;
-			case Instruction::Add:
-			case Instruction::Sub:
-			case Instruction::Mul:
-			case Instruction::And:
-			case Instruction::Or:
-			case Instruction::Xor:
-			case Instruction::Trunc:
-			case Instruction::FPToSI:
-			case Instruction::SIToFP:
-			case Instruction::SDiv:
-			case Instruction::SRem:
-			case Instruction::Shl:
-			case Instruction::AShr:
-			case Instruction::LShr:
-			case Instruction::FAdd:
-			case Instruction::FDiv:
-			case Instruction::FSub:
-			case Instruction::FPTrunc:
-			case Instruction::FPExt:
-			case Instruction::FMul:
-			case Instruction::FCmp:
-			case Instruction::ICmp:
-			case Instruction::ZExt:
-			case Instruction::SExt:
-			case Instruction::Select:
-			case Instruction::ExtractValue:
-			case Instruction::URem:
-			case Instruction::UDiv:
-			case Instruction::UIToFP:
-			case Instruction::FPToUI:
-			case Instruction::PtrToInt:
-				return true;
-			default:
-				llvm::report_fatal_error(Twine("Unsupported opcode: ",StringRef(I.getOpcodeName())), false);
-				return true;
-		}
-	}
-	return false;
-}
-
 bool isBitCast(const Value* v)
 {
-	const User* b=static_cast<const User*>(v);
-	if(isa<BitCastInst>(v))
-	{
-		bool validCast = TypeSupport::isValidTypeCast(b->getOperand(0), v->getType());
-		if(!validCast)
-		{
-			llvm::errs() << "Error while handling cast " << *v << "\n";
-			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
-			return false;
-		}
-		return true;
-	}
-	const ConstantExpr* ce=dyn_cast<const ConstantExpr>(v);
-	if(ce && ce->getOpcode()==Instruction::BitCast)
-	{
-		bool validCast = TypeSupport::isValidTypeCast(b->getOperand(0), v->getType());
-		if(!validCast)
-		{
-			llvm::errs() << "Error while handling cast " << *v << "\n";
-			llvm::report_fatal_error("Unsupported code found, please report a bug", false);
-			return false;
-		}
-		return true;
-	}
-	return false;
+	const ConstantExpr * ce = dyn_cast<ConstantExpr>(v);
+
+	return isa<BitCastInst>(v) || ( ce && ce->getOpcode() == Instruction::BitCast);
 }
 
 bool isGEP(const Value* v)
@@ -220,7 +91,6 @@ bool isGEP(const Value* v)
 		return true;
 	return false;
 }
-
 
 uint32_t getIntFromValue(const Value* v)
 {
@@ -364,43 +234,7 @@ bool TypeSupport::isValidTypeCast(const Value * castOp, Type * dstPtr)
 	return false;
 }
 
-bool TypeSupport::isClientType(const Type* t)
-{
-	return (t->isStructTy() && cast<StructType>(t)->hasName() &&
-		strncmp(t->getStructName().data(), "class._ZN6client", 16)==0);
-}
-
-bool TypeSupport::isClientArrayType(const Type* t)
-{
-	return (t->isStructTy() && cast<StructType>(t)->hasName() &&
-		strcmp(t->getStructName().data(), "class._ZN6client5ArrayE")==0);
-}
-
-bool TypeSupport::isI32Type(const Type* t)
-{
-	return t->isIntegerTy() && static_cast<const IntegerType*>(t)->getBitWidth()==32;
-}
-
-bool TypeSupport::isTypedArrayType(const Type* t)
-{
-	return t->isIntegerTy(8) || t->isIntegerTy(16) || t->isIntegerTy(32) ||
-		t->isFloatTy() || t->isDoubleTy();
-}
-
-bool TypeSupport::isImmutableType(const Type* t)
-{
-	if(t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isPointerTy())
-		return true;
-	return false;
-}
-
-bool TypeSupport::isUnion(const Type* t)
-{
-	return (t->isStructTy() && cast<StructType>(t)->hasName() &&
-		t->getStructName().startswith("union."));
-}
-
-bool TypeSupport::getBasesInfo(const StructType* t, uint32_t& firstBase, uint32_t& baseCount) const
+bool TypeSupport::getBasesInfo(StructType* t, uint32_t& firstBase, uint32_t& baseCount) const
 {
 	const NamedMDNode* basesNamedMeta = getBasesMetadata(t);
 	if(!basesNamedMeta)
@@ -428,50 +262,6 @@ bool TypeSupport::getBasesInfo(const StructType* t, uint32_t& firstBase, uint32_
 			break;
 	}
 	return true;
-}
-
-Type* TypeSupport::dfsFindRealType(const Value* v, std::set<const PHINode*>& visitedPhis)
-{
-	if(isBitCast(v))
-		return static_cast<const User*>(v)->getOperand(0)->getType();
-	else if(const IntrinsicInst* ci = dyn_cast<IntrinsicInst>(v))
-	{
-		//Support duetto.cast.user
-		if(ci->getIntrinsicID() == Intrinsic::duetto_cast_user)
-			return ci->getArgOperand(0)->getType();
-	}
-
-	const PHINode* newPHI=dyn_cast<const PHINode>(v);
-	if(newPHI)
- 	{
-		if(!visitedPhis.insert(newPHI).second)
-		{
-			//Assume true, if needed it will become false later on
-			return nullptr;
-		}
-		
-		assert(newPHI->getNumIncomingValues()>=1);
-
-		Type* ret = dfsFindRealType(newPHI->getIncomingValue(0),visitedPhis);
-
-		for(unsigned i=1;i<newPHI->getNumIncomingValues();i++)
-		{
-			Type* t=dfsFindRealType(newPHI->getIncomingValue(i),visitedPhis);
-			if(t==NULL)
-				continue;
-			else if(ret==NULL)
-				ret=t;
-			else if(ret!=t)
-			{
-				llvm::errs() << "Unconsistent real types for phi " << *v << "\n";
-				llvm::report_fatal_error("Unsupported code found, please report a bug", false);
-				return ret;
-			}
-		}
-		visitedPhis.erase(newPHI);
-		return ret;
- 	}
-	return v->getType();
 }
 
 const llvm::NamedMDNode* TypeSupport::getBasesMetadata(const llvm::StructType * t) const

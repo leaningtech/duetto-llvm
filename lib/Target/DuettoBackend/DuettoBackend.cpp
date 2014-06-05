@@ -18,6 +18,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Duetto/Writer.h"
 #include "llvm/Duetto/AllocaMerging.h"
+#include "llvm/Duetto/RemovePHI.h"
 #include "llvm/Duetto/ResolveAliases.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -27,6 +28,7 @@ using namespace llvm;
 static cl::opt<std::string> SourceMap("duetto-sourcemap", cl::Optional,
   cl::desc("If specified, the file name of the source map"), cl::value_desc("filename"));
 
+static cl::opt<bool> PrettyCode("duetto-pretty-code", cl::desc("Generate human readable JS") );
 
 extern "C" void LLVMInitializeDuettoBackendTarget() {
   // Register the target.
@@ -59,13 +61,13 @@ bool DuettoWritePass::runOnModule(Module& M)
        llvm::report_fatal_error(ErrorString.c_str(), false);
        return false;
     }
-    duetto::DuettoWriter writer(M, Out, AA, SourceMap, &sourceMap.os());
+    duetto::DuettoWriter writer(M, Out, AA, SourceMap, &sourceMap.os(), PrettyCode);
     sourceMap.keep();
     writer.makeJS();
   }
   else
   {
-    duetto::DuettoWriter writer(M, Out, AA, SourceMap, NULL);
+    duetto::DuettoWriter writer(M, Out, AA, SourceMap, NULL, PrettyCode);
     writer.makeJS();
   }
 
@@ -92,6 +94,7 @@ bool DuettoTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
   if (FileType != TargetMachine::CGFT_AssemblyFile) return true;
   PM.add(createResolveAliasesPass());
   PM.add(createAllocaMergingPass());
+  PM.add(createDuettoPHIRemovalPass());
   PM.add(new DuettoWritePass(o));
   return false;
 }
