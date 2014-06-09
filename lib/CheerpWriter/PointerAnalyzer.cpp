@@ -26,7 +26,7 @@ namespace cheerp {
 /*
  * The map is used to handle cyclic PHI nodes
  */
-POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
+POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 {
 	assert(v->getType()->isPointerTy());
 
@@ -54,7 +54,7 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 		//NOTE: An array of pointer to client objects exists, not an array of objects.
 		return iter->second = COMPLETE_OBJECT;
 	}
-	if(AllocaInst::classof(v) || GlobalVariable::classof(v))
+	if( isa<AllocaInst>(v) || isa<GlobalVariable>(v))
 	{
 		if(TypeSupport::isImmutableType(pt->getElementType()) &&  needsWrappingArray(v) )
 			return iter->second = COMPLETE_ARRAY;
@@ -64,7 +64,7 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 	//Follow bitcasts
 	if(isBitCast(v))
 	{
-		const User* bi=static_cast<const User*>(v);
+		const User* bi = cast<User>(v);
 		//Casts from unions return regular pointers
 		if(TypeSupport::isUnion(bi->getOperand(0)->getType()->getPointerElementType()))
 		{
@@ -74,12 +74,24 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 			else
 				return iter->second = COMPLETE_ARRAY;
 		}
-		return iter->second = getPointerKind(bi->getOperand(0));
 	}
-	if(isNopCast(v))
+	if( isBitCast(v) || isNopCast(v))
 	{
-		const User* bi=static_cast<const User*>(v);
-		return iter->second = getPointerKind(bi->getOperand(0));
+		const User* bi = cast<User>(v);
+
+		assert( bi->getOperand(0)->getType()->isPointerTy() );
+
+		PointerType * toTy = cast<PointerType>(v->getType());
+		PointerType * fromTy = cast<PointerType>(bi->getOperand(0)->getType());
+
+		if ( (getStratForType(fromTy) != getStratForType(toTy) ) &&
+			! TypeSupport::isClientType( fromTy->getElementType() ) &&
+			( getPointerUsageFlagsComplete(bi) & need_self_flags ) )
+		{
+			return iter->second = REGULAR;
+		}
+		else
+			return iter->second = getPointerKind(bi->getOperand(0));
 	}
 	//Follow select
 	if(const SelectInst* s=dyn_cast<SelectInst>(v))
@@ -98,7 +110,7 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 	if (DynamicAllocInfo::getAllocType(v) != DynamicAllocInfo::not_an_alloc )
 		return iter->second = COMPLETE_ARRAY;
 
-	if ( const Argument * arg = dyn_cast<const Argument>(v) )
+	if ( const Argument * arg = dyn_cast<Argument>(v) )
 	{
 		const Function * F = arg->getParent();
 		
@@ -107,11 +119,14 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 			return iter->second = REGULAR;
 	}
 	
-	if (isa<const PHINode>(v) || isa<const Argument>(v))
+	if (isa<PHINode>(v) || isa<Argument>(v))
 	{
 		if (TypeSupport::isImmutableType( pt->getElementType() ) )
 		{
-			return iter->second = needsWrappingArray(v)? REGULAR : COMPLETE_OBJECT;
+			if ( isa<Argument>(v) )
+				return iter->second = (needsWrappingArray(v) || isArgumentReadOnly( cast<Argument>(v) ) ) ? REGULAR : COMPLETE_OBJECT;
+			else
+				return iter->second = REGULAR;
 		}
 		else
 		{
@@ -121,20 +136,23 @@ POINTER_KIND CheerpPointerAnalyzer::getPointerKind(const Value* v) const
 	return iter->second = REGULAR;
 }
 
-bool CheerpPointerAnalyzer::hasSelfMember(const Value* v) const
+bool PointerAnalyzer::hasSelfMember(const Value* v) const
 {
-	assert( TypeSupport::findRealType(v)->isPointerTy() );
+	assert( v->getType()->isPointerTy() );
 	
-	PointerType * tp = cast<PointerType>(TypeSupport::findRealType(v) );
+	PointerType * tp = cast<PointerType>( v->getType() );
 
-	if ( TypeSupport::isImmutableType(tp->getElementType()) || !isa<StructType>(tp->getElementType()) )
+	if ( TypeSupport::isImmutableType(tp->getElementType()) )
+		return false;
+
+	if ( isa<StructType>( tp->getElementType() ) && types.hasBasesInfo( tp->getElementType() ) )
 		return false;
 
 	return (getPointerUsageFlagsComplete(v) & need_self_flags);
 }
 
 #ifndef NDEBUG
-void CheerpPointerAnalyzer::dumpPointer(const Value* v) const
+void PointerAnalyzer::dumpPointer(const Value* v) const
 {
 	std::ostringstream fmt;
 	fmt << std::setw(96) << std::left;
@@ -146,7 +164,7 @@ void CheerpPointerAnalyzer::dumpPointer(const Value* v) const
 		else
 			tmp << "tmp" << namegen.getUniqueIndexForValue(v);
 		
-		if (const Argument * arg = dyn_cast<const Argument>(v))
+		if (const Argument * arg = dyn_cast<Argument>(v))
 		{
 			tmp << " arg of function: " << arg->getParent()->getName().data();
 		}
@@ -177,7 +195,7 @@ void CheerpPointerAnalyzer::dumpPointer(const Value* v) const
 
 #ifdef CHEERP_DEBUG_POINTERS
 
-void CheerpPointerAnalyzer::dumpAllPointers() const
+void PointerAnalyzer::dumpAllPointers() const
 {
 	llvm::errs() << "Dumping all pointers\n";
 	
@@ -187,7 +205,7 @@ void CheerpPointerAnalyzer::dumpAllPointers() const
 		dumpPointer(ptr);
 }
 
-void CheerpPointerAnalyzer::dumpAllFunctions() const
+void PointerAnalyzer::dumpAllFunctions() const
 {
 	llvm::errs() << "Dumping functions:\n";
 
@@ -204,7 +222,7 @@ void CheerpPointerAnalyzer::dumpAllFunctions() const
 
 #endif //CHEERP_DEBUG_POINTERS
 
-bool CheerpPointerAnalyzer::needsWrappingArray(const Value* v) const
+bool PointerAnalyzer::needsWrappingArray(const Value* v) const
 {
 	assert( v->getType()->isPointerTy() );
 	assert( TypeSupport::isImmutableType(cast<PointerType>( v->getType() )->getElementType() ) );
@@ -230,7 +248,29 @@ bool CheerpPointerAnalyzer::needsWrappingArray(const Value* v) const
 		( (isa<Argument>(v) || isa<PHINode>(v) ) && (getPointerUsageFlagsComplete(v) & POINTER_NONCONST_DEREF) );
 }
 
-uint32_t CheerpPointerAnalyzer::getPointerUsageFlagsComplete(const Value * v) const
+bool PointerAnalyzer::isArgumentReadOnly(const Argument* v) const
+{
+	const Function * F = v->getParent();
+	if ( F->hasAddressTaken() ) return false;
+
+	AliasAnalysis::Location L(v);
+
+	for ( const Use & u : F->uses() )
+	{
+		ImmutableCallSite callV (u.getUser() );
+		
+		if ( ! (callV.isCall() || callV.isInvoke() ) )
+			continue;
+
+		assert( callV.getCalledFunction() == F );
+		
+		if ( AA.getModRefInfo(callV, L) & AliasAnalysis::Mod )
+			return false;
+	}
+	return true;
+}
+
+uint32_t PointerAnalyzer::getPointerUsageFlagsComplete(const Value * v) const
 {
 	assert(v->getType()->isPointerTy());
 
@@ -245,9 +285,15 @@ uint32_t CheerpPointerAnalyzer::getPointerUsageFlagsComplete(const Value * v) co
 	return iter->second;
 }
 
-uint32_t CheerpPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) const
+uint32_t PointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) const
 {
 	assert(v->getType()->isPointerTy());
+	
+	// HACK
+	// Temporary workaround to force all the PHIs of immutable types to be REGULAR.
+	// this will be removed when we will get rid of PHIs entirely
+	if ( isa< PHINode > (v) && TypeSupport::isImmutableType( v->getType()->getPointerElementType()) )
+		return POINTER_UNKNOWN;
 
 	pointer_usage_map_t::const_iterator iter = pointerUsageMap.find(v);
 
@@ -258,14 +304,14 @@ uint32_t CheerpPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 		{
 			const User* U = it->getUser();
 			// Check if the pointer "v" is used as "ptr" for a StoreInst. 
-			if (const StoreInst * I = dyn_cast<const StoreInst>(U) )
+			if (const StoreInst * I = dyn_cast<StoreInst>(U) )
 			{
 				if (I->getPointerOperand() == v)
 					ans |= POINTER_NONCONST_DEREF; 
 			}
 			
 			// Check if the pointer "v" is used as lhs or rhs of a comparison operation
-			else if (const CmpInst * I = dyn_cast<const CmpInst>(U) )
+			else if (const CmpInst * I = dyn_cast<CmpInst>(U) )
 			{
 				if (!I->isEquality())
 					ans |= POINTER_ORDINABLE;
@@ -274,7 +320,7 @@ uint32_t CheerpPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 			}
 			
 			// Check if the pointer is casted to int
-			else if (isa<const PtrToIntInst>(U) )
+			else if (isa<PtrToIntInst>(U) )
 			{
 				ans |= POINTER_CASTABLE_TO_INT;
 			}
@@ -282,22 +328,22 @@ uint32_t CheerpPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 			// Pointer used as a base to a getElementPtr
 			else if (isGEP(U) )
 			{
-				const User * I = cast<const User>(U);
-  				const ConstantInt * p = dyn_cast<const ConstantInt>(I->getOperand(1));
+				const User * I = cast<User>(U);
+				const ConstantInt * p = dyn_cast<ConstantInt>(I->getOperand(1));
 				if (!p || !p->isZero())
 					ans |= POINTER_ARITHMETIC;
 			}
 			/** TODO deal with all use cases and remove the following 2 blocks **/
 			else if (
-				isa<const PHINode>(U) || 
-				isa<const SelectInst>(U) ||
-				isa<const LoadInst>(U) ||
-				isa<const CallInst>(U) ||
-				isa<const InvokeInst>(U) ||
-				isa<const ReturnInst>(U) || 
-				isa<const GlobalValue>(U) ||
-				isa<const ConstantArray>(U) ||
-				isa<const ConstantStruct>(U) ||
+				isa<PHINode>(U) ||
+				isa<SelectInst>(U) ||
+				isa<LoadInst>(U) ||
+				isa<CallInst>(U) ||
+				isa<InvokeInst>(U) ||
+				isa<ReturnInst>(U) ||
+				isa<GlobalValue>(U) ||
+				isa<ConstantArray>(U) ||
+				isa<ConstantStruct>(U) ||
 				isBitCast(U) ||
 				isNopCast(U) )
 			{
@@ -318,7 +364,7 @@ uint32_t CheerpPointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) cons
 	return iter->second;
 }
 
-uint32_t CheerpPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set<const Value *> & openset) const
+uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set<const Value *> & openset) const
 {
 	if ( !openset.insert(v).second )
 	{
@@ -331,28 +377,28 @@ uint32_t CheerpPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, st
 	{
 		const User * U = it->getUser();
 		// Check if "v" is used as a operand in a phi node
-		if (isa<const PHINode>(U) ||
-			isa<const SelectInst>(U) ||
+		if (isa<PHINode>(U) ||
+			isa<SelectInst>(U) ||
 			isBitCast(U) ||
 			isNopCast(U))
 		{
 			f |= dfsPointerUsageFlagsComplete(U, openset);
 		}
-		else if (const CallInst * I = dyn_cast<const CallInst>(U))
+		else if (const CallInst * I = dyn_cast<CallInst>(U))
 		{
 			// Indirect calls require a finer analysis
 			f |= usageFlagsForCall(v,I,openset);
 		}
-		else if (const InvokeInst * I = dyn_cast<const InvokeInst>(U))
+		else if (const InvokeInst * I = dyn_cast<InvokeInst>(U))
 		{
 			f |= usageFlagsForCall(v,I,openset);
 		}
-		else if (isa<const ReturnInst>(U))
+		else if (isa<ReturnInst>(U))
 		{
 			//TODO deal with me properly
 			f |= POINTER_UNKNOWN;
 		}
-		else if (const StoreInst * I = dyn_cast<const StoreInst>(U) )
+		else if (const StoreInst * I = dyn_cast<StoreInst>(U) )
 		{
 			if (I->getValueOperand() == v)
 			{
@@ -364,16 +410,16 @@ uint32_t CheerpPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, st
 			}
 		}
 		else if (
-			isa<const ConstantStruct>(U) ||
-			isa<const ConstantArray>(U) ||
-			isa<const GlobalValue>(U) )
+			isa<ConstantStruct>(U) ||
+			isa<ConstantArray>(U) ||
+			isa<GlobalValue>(U) )
 		{
 			f |= POINTER_UNKNOWN;
 		}
 		else if ( // Things we know are ok
-			isa<const CmpInst>(U) ||
-			isa<const LoadInst>(U) ||
-			isa<const PtrToIntInst>(U) ||
+			isa<CmpInst>(U) ||
+			isa<LoadInst>(U) ||
+			isa<PtrToIntInst>(U) ||
 			isGEP(U) )
 		{
 			continue;
@@ -391,7 +437,7 @@ uint32_t CheerpPointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, st
 	return f;
 }
 
-uint32_t CheerpPointerAnalyzer::usageFlagsForCall(const Value * v, ImmutableCallSite I, std::set<const Value *> & openset) const
+uint32_t PointerAnalyzer::usageFlagsForCall(const Value * v, ImmutableCallSite I, std::set<const Value *> & openset) const
 {
 	const Function * f = I.getCalledFunction();
 
