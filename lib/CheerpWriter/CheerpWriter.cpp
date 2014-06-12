@@ -636,18 +636,17 @@ void CheerpWriter::compileFree(const Value* obj)
 	//TODO: Clean up class related data structures
 }
 
-CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(ImmutableCallSite callV, const Function * func)
+CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(ImmutableCallSite callV)
 {
-	assert( callV.isCall() || callV.isInvoke() );
-	assert( func );
-	assert( (func == callV.getCalledFunction() ) || !(callV.getCalledFunction()) );
+	assert( callV );
+	assert( callV.getCalledFunction() );
 	
-	bool userImplemented = !func->empty();
+	bool userImplemented = !callV.getCalledFunction()->empty();
 	
 	ImmutableCallSite::arg_iterator it = callV.arg_begin(), itE = callV.arg_end();
 	
-	const char* ident = func->getName().data();
-	unsigned instrinsicId = func->getIntrinsicID();
+	const char* ident = callV.getCalledFunction()->getName().data();
+	unsigned instrinsicId = callV.getCalledFunction()->getIntrinsicID();
 	//First handle high priority builtins, they will be used even
 	//if an implementation is available from the user
 	if(instrinsicId==Intrinsic::memmove)
@@ -722,7 +721,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//keeping all local variable around. The helper
 		//method is printed on demand depending on a flag
 		stream << "cheerpCreateClosure";
-		compileMethodArgsForDirectCall(it,itE, func->arg_begin());
+		compileMethodArgsForDirectCall(it,itE, callV.getCalledFunction()->arg_begin());
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::cheerp_make_complete_object)
@@ -1300,7 +1299,14 @@ void CheerpWriter::compileMethodArgs(const llvm::User::const_op_iterator it, con
 	{
 		if(cur!=it)
 			stream << ", ";
-		compileOperand(*cur, REGULAR);
+
+		Type * tp = (*cur)->getType();
+		compileOperand(*cur, 
+			tp->isPointerTy() ? 
+				tp->getPointerElementType()->isFunctionTy() ?
+				COMPLETE_OBJECT :
+				REGULAR :
+			UNDECIDED);
 	}
 	stream << ')';
 }
@@ -1349,7 +1355,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 			if(ci.getCalledFunction())
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, ci.getCalledFunction());
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				assert(cf!=COMPILE_EMPTY);
 				if(cf==COMPILE_OK)
 				{
@@ -1495,7 +1501,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileNotInlineableIns
 			if(calledFunc)
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, calledFunc);
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				if(cf!=COMPILE_UNSUPPORTED)
 					return cf;
 				stream << namegen.getName(calledFunc);
