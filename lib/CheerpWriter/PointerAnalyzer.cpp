@@ -36,10 +36,6 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 		return iter->second;
 	iter = pointerKindMap.insert( std::make_pair(v, UNDECIDED) ).first;
 	
-#ifdef CHEERP_DEBUG_POINTERS
-	debugAllPointersSet.insert(v);
-#endif
- 
 	PointerType * pt = cast<PointerType>(v->getType());
 
 	if ( pt->isPointerTy() && pt->getPointerElementType()->isFunctionTy() )
@@ -223,7 +219,8 @@ bool PointerAnalyzer::hasSelfMember(const Value* v) const
 }
 
 #ifndef NDEBUG
-void PointerAnalyzer::dumpPointer(const Value* v) const
+
+void PointerAnalyzer::dumpPointer(const Value* v, bool dumpOwnerFunc) const
 {
 	llvm::formatted_raw_ostream fmt( llvm::errs() );
 
@@ -231,8 +228,13 @@ void PointerAnalyzer::dumpPointer(const Value* v) const
 	v->printAsOperand( fmt );
 	fmt.resetColor();
 	
-	if ( const Instruction * I = dyn_cast<Instruction>(v) )
-		fmt << " in function: " << I->getParent()->getParent()->getName();
+	if (dumpOwnerFunc)
+	{
+		if ( const Instruction * I = dyn_cast<Instruction>(v) )
+			fmt << " in function: " << I->getParent()->getParent()->getName();
+		else if ( const Argument * A = dyn_cast<Argument>(v) )
+			fmt << " arg of function: " << A->getParent()->getName();
+	}
 
 	if (v->getType()->isPointerTy())
 	{
@@ -252,39 +254,6 @@ void PointerAnalyzer::dumpPointer(const Value* v) const
 	else
 		fmt << " is not a pointer";
 	fmt << '\n';
-}
-
-void PointerAnalyzer::dumpAllPointers() const
-{
-	llvm::errs() << "Dumping all pointers\n";
-	
-	{
-		llvm::formatted_raw_ostream fmt( llvm::errs() );
-		fmt.PadToColumn(0) << "Name";
-		fmt.PadToColumn(92) << "Kind";
-		fmt.PadToColumn(112) << "UsageFlags";
-		fmt.PadToColumn(132) << "UsageFlagsComplete";
-		fmt.PadToColumn(152) << "IsImmutable";
-		fmt << '\n';
-	}
-	
-	for (auto ptr : debugAllPointersSet)
-		dumpPointer(ptr);
-}
-
-void PointerAnalyzer::dumpAllFunctions() const
-{
-	llvm::errs() << "Dumping functions:\n";
-
-	for (auto f : debugAllFunctionsSet)
-	{
-		llvm::errs() << f->getName();
-		if (canBeCalledIndirectly(f))
-		{
-			llvm::errs() << " called indirectly";
-		}
-		llvm::errs() << "\n";
-	}
 }
 
 #endif //NDEBUG
@@ -418,9 +387,9 @@ uint32_t PointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) const
 			}
 			else
 			{
-#ifdef CHEERP_DEBUG_POINTERS
+#ifndef NDEBUG
 				llvm::errs() << "Adding POINTER_UNKNOWN in getPointerUsageFlags due to instruction: " << valueObjectName(U) << "\n";
-#endif //CHEERP_DEBUG_POINTERS
+#endif
 				ans |= POINTER_UNKNOWN;
 			}
 		}
@@ -488,9 +457,9 @@ uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set
 		}
 		else
 		{
-#ifdef CHEERP_DEBUG_POINTERS
+#ifndef NDEBUG
 			llvm::errs() << "Adding POINTER_UNKNOWN in dfsPointerUsageFlagsComplete due to instruction: " << valueObjectName(U) << "\n";
-#endif //CHEERP_DEBUG_POINTERS
+#endif
 
 			f |= POINTER_UNKNOWN;
 		}
@@ -526,5 +495,41 @@ uint32_t PointerAnalyzer::usageFlagsForCall(const llvm::Use & u, ImmutableCallSi
 		return POINTER_UNKNOWN;
 	}
 }
+
+#ifndef NDEBUG
+
+void dumpAllPointers(const Function & F, const PointerAnalyzer & analyzer)
+{
+	llvm::errs() << "Function: " << F.getName();
+	if ( F.hasAddressTaken() )
+		llvm::errs() << " (with address taken)";
+	llvm::errs() << "\n";
+	
+	for ( const Argument & arg : F.getArgumentList() )
+		analyzer.dumpPointer(&arg, false);
+
+	for ( const BasicBlock & BB : F )
+	{
+		for ( const Instruction & I : BB )
+		{
+			if ( I.getType()->isPointerTy() )
+				analyzer.dumpPointer(&I, false);
+		}
+	}
+	llvm::errs() << "\n";
+}
+
+void writePointerDumpHeader()
+{
+	llvm::formatted_raw_ostream fmt( llvm::errs() );
+	fmt.PadToColumn(0) << "Name";
+	fmt.PadToColumn(92) << "Kind";
+	fmt.PadToColumn(112) << "UsageFlags";
+	fmt.PadToColumn(132) << "UsageFlagsComplete";
+	fmt.PadToColumn(152) << "IsImmutable";
+	fmt << '\n';
+}
+
+#endif //NDEBUG
 
 }

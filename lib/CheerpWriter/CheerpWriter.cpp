@@ -24,6 +24,11 @@ using namespace cheerp;
 //De-comment this to debug why a global is included in the JS
 //#define DEBUG_GLOBAL_DEPS
 
+#ifndef CHEERP_DEBUG_POINTERS 
+//Set this to 1 if you want pointer dump info (NDEBUG must be not defined)
+#define CHEERP_DEBUG_POINTERS 0
+#endif
+
 class CheerpRenderInterface: public RenderInterface
 {
 private:
@@ -789,16 +794,6 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 
 		stream << StringRef(typeName, typeLen);
 		compileMethodArgs(it, itE, callV);
-
-// 		//TODO cleanup when we have intrinsics in pointer analyzer
-// 		stream << "(";
-// 		for (auto cur = it; cur!= itE; ++cur)
-// 		{
-// 			if ( cur != it )
-// 				stream << ",";
-// 			compileOperand(*cur);
-// 		}
-// 		stream <<")";
 		return COMPILE_OK;
 	}
 	return COMPILE_UNSUPPORTED;
@@ -2717,12 +2712,23 @@ void CheerpWriter::makeJS()
 	compileClassesExportedToJs();
 	compileNullPtrs();
 	
+#if CHEERP_DEBUG_POINTERS
+	writePointerDumpHeader();
+#endif
+
 	for ( const Function * F : globalDeps.functionOrderedList() )
 		if (!F->empty())
+		{
 			compileMethod(*F);
+#if CHEERP_DEBUG_POINTERS
+			dumpAllPointers(*F, analyzer);
+#endif
+		}
 	
 	for ( const GlobalVariable * GV : globalDeps.varsOrderedList() )
+	{
 		compileGlobal(*GV);
+	}
 
 	for ( StructType * st : globalDeps.classesWithBaseInfo() )
 		compileClassType(st);
@@ -2755,10 +2761,4 @@ void CheerpWriter::makeJS()
 	// Link the source map if necessary
 	if (!sourceMapName.empty())
 		stream << "//# sourceMappingURL=" << sourceMapName;
-	
-#ifdef CHEERP_DEBUG_POINTERS
-	analyzer.dumpAllFunctions();
-	analyzer.dumpAllPointers();
-#endif //CHEERP_DEBUG_POINTERS
-
 }

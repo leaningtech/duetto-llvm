@@ -104,9 +104,7 @@ public:
 
 #ifndef NDEBUG
 	// Dump a pointer value info
-	void dumpPointer(const llvm::Value * v) const;
-	void dumpAllPointers() const;
-        void dumpAllFunctions() const;
+	void dumpPointer(const llvm::Value * v, bool dumpOwnerFuncion = true) const;
 #endif //NDEBUG
 
 private:
@@ -176,9 +174,6 @@ private:
 	// Detect if a function can possibly be called indirectly
 	bool canBeCalledIndirectly(const llvm::Function * f) const
 	{
-#ifndef NDEBUG
-		debugAllFunctionsSet.insert(f);
-#endif
 		return f->empty() || f->hasAddressTaken();
 	}
 	
@@ -192,20 +187,19 @@ private:
 	typedef std::map<const llvm::Function *, bool > function_indirect_call_map_t;
 	mutable function_indirect_call_map_t functionIndirectCallMap;
 	
-#ifndef NDEBUG
-	typedef std::set<const llvm::Value *> known_pointers_t;
-	mutable known_pointers_t debugAllPointersSet;
-        
-        typedef std::set<const llvm::Function *> known_functions_t;
-        mutable known_functions_t debugAllFunctionsSet;
-#endif //NDEBUG
 	
 	const TypeSupport & types;
 	llvm::AliasAnalysis & AA;
-
 };
 
 /** @} */
+
+#ifndef NDEBUG
+
+void dumpAllPointers(const llvm::Function &, const PointerAnalyzer & );
+void writePointerDumpHeader();
+
+#endif //NDEBUG
 
 }
 
