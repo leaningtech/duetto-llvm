@@ -77,12 +77,21 @@ enum POINTER_KIND {
 class PointerAnalyzer {
 public:
 	
-	PointerAnalyzer( NameGenerator & namegen, const TypeSupport & types, llvm::AliasAnalysis & AA ) : namegen(namegen), types(types),AA(AA) {}
-	
+	PointerAnalyzer( const TypeSupport & types, llvm::AliasAnalysis & AA ) : types(types),AA(AA) {}
+
 	POINTER_KIND getPointerKind(const llvm::Value* v) const;
 	POINTER_KIND getPointerKindForStore(const llvm::Value * storeDest) const;
 	POINTER_KIND getPointerKindForStore(const llvm::Constant * cval) const;
-	
+
+	/**
+	 * Return the pointer kind for an Argument operand in a Call/Invoke instruction.
+	 *
+	 * "it" must be an operand of the call instruction (not the called function operand).
+	 * "arg" is required only if the call is direct. It can be the end iterator if the operand is a vararg
+	 */
+	POINTER_KIND getPointerKindForArgOperand(llvm::User::const_op_iterator it,
+						 llvm::Function::const_arg_iterator arg = llvm::Function::const_arg_iterator()) const;
+
 	// Detect if every object pointed by this pointer has a .s member
 	bool hasSelfMember(const llvm::Value * v) const;
 	
@@ -90,7 +99,7 @@ public:
 	// The function pointer might be null, in this case return false.
 	bool hasNonRegularArgs(const llvm::Function * f) const
 	{
-		return (f && !canBeCalledIndirectly(f) && !f->isVarArg() );
+		return (f && !canBeCalledIndirectly(f) );
 	}
 
 #ifndef NDEBUG
@@ -162,7 +171,7 @@ private:
 	 */
 	uint32_t dfsPointerUsageFlagsComplete(const llvm::Value * v,std::set<const llvm::Value *> & openset) const;
 	
-	uint32_t usageFlagsForCall(const llvm::Value * v, llvm::ImmutableCallSite I, std::set<const llvm::Value *> & openset) const;	
+	uint32_t usageFlagsForCall(const llvm::Use & u, llvm::ImmutableCallSite I, std::set<const llvm::Value *> & openset) const;
 
 	// Detect if a function can possibly be called indirectly
 	bool canBeCalledIndirectly(const llvm::Function * f) const
@@ -191,7 +200,6 @@ private:
         mutable known_functions_t debugAllFunctionsSet;
 #endif //NDEBUG
 	
-	const NameGenerator & namegen;
 	const TypeSupport & types;
 	llvm::AliasAnalysis & AA;
 

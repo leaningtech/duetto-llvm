@@ -788,16 +788,17 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 			stream << "new ";
 
 		stream << StringRef(typeName, typeLen);
+		compileMethodArgs(it, itE, callV);
 
-		//TODO cleanup when we have intrinsics in pointer analyzer
-		stream << "(";
-		for (auto cur = it; cur!= itE; ++cur)
-		{
-			if ( cur != it )
-				stream << ",";
-			compileOperand(*cur);
-		}
-		stream <<")";
+// 		//TODO cleanup when we have intrinsics in pointer analyzer
+// 		stream << "(";
+// 		for (auto cur = it; cur!= itE; ++cur)
+// 		{
+// 			if ( cur != it )
+// 				stream << ",";
+// 			compileOperand(*cur);
+// 		}
+// 		stream <<")";
 		return COMPILE_OK;
 	}
 	return COMPILE_UNSUPPORTED;
@@ -1329,20 +1330,7 @@ void CheerpWriter::compileMethodArgs(User::const_op_iterator it, User::const_op_
 		Type * tp = (*cur)->getType();
 		
 		if ( tp->isPointerTy() )
-		{
-			if ( F && arg_it != F->arg_end() )
-			{
-				assert( arg_it->getArgNo() == callV.getArgumentNo(cur) );
-				compileOperand(*cur, analyzer.getPointerKind(arg_it) );
-			}
-			else
-			{
-				compileOperand(*cur,
-					       tp->getPointerElementType()->isFunctionTy() ?
-					       COMPLETE_OBJECT :
-					       REGULAR);
-			}
-		}
+			compileOperand(*cur, analyzer.getPointerKindForArgOperand(cur, arg_it) );
 		else
 			compileOperand(*cur);
 		

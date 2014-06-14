@@ -226,7 +226,8 @@ public:
 	ostream_proxy stream;
 	CheerpWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
 		const std::string& sourceMapName, llvm::raw_ostream* sourceMap, bool ReadableOutput):
-		module(m),targetData(&m),AA(AA),currentFun(NULL),globalDeps(m), namegen( globalDeps, ReadableOutput ),types(m, globalDeps.classesWithBaseInfo() ), analyzer( namegen, types, AA ),
+		module(m),targetData(&m),AA(AA),currentFun(NULL),globalDeps(m), namegen( globalDeps, ReadableOutput ),
+		types(m, globalDeps.classesWithBaseInfo() ), analyzer( types, AA ),
 		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
 		stream(s, ReadableOutput)
 	{

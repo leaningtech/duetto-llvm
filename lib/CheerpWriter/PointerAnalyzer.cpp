@@ -42,17 +42,22 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
  
 	PointerType * pt = cast<PointerType>(v->getType());
 
-	if ( pt->getPointerElementType()->isFunctionTy() )
+	if ( pt->isPointerTy() && pt->getPointerElementType()->isFunctionTy() )
 		return iter->second = COMPLETE_OBJECT;
 
-	if( const CallInst * ci = dyn_cast<CallInst>(v) )
-		if ( const Function * f = ci->getCalledFunction() )
-			if ( f->getIntrinsicID() == Intrinsic::cheerp_create_closure ||
-				f->getIntrinsicID() == Intrinsic::cheerp_pointer_base ||
-				f->getIntrinsicID() == Intrinsic::cheerp_make_complete_object)
-			{
-				return iter->second = COMPLETE_OBJECT;
-			}
+	if( const IntrinsicInst * ii = dyn_cast<IntrinsicInst>(v) )
+	{
+		switch( ii->getIntrinsicID() )
+		{
+		case Intrinsic::cheerp_create_closure:
+			return iter->second = COMPLETE_OBJECT;
+		case Intrinsic::cheerp_pointer_base:
+		case Intrinsic::cheerp_make_complete_object:
+			return iter->second = COMPLETE_OBJECT;
+		default:
+			break;
+		}
+	}
 
 	if(TypeSupport::isClientArrayType(pt->getElementType()))
 	{
@@ -88,7 +93,7 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 				return iter->second = COMPLETE_ARRAY;
 		}
 	}
-	if( isBitCast(v) || isNopCast(v))
+	if( isBitCast(v) || isNopCast(v) )
 	{
 		const User* bi = cast<User>(v);
 
@@ -127,12 +132,7 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 	{
 		const Function * F = arg->getParent();
 		
-		if ( F->getIntrinsicID() == Intrinsic::cheerp_create_closure && 
-			arg->getArgNo() == 0 )
-			return iter->second = COMPLETE_OBJECT;
-		
-		//TODO properly handle varargs
-		if (!F || canBeCalledIndirectly(F) || F->isVarArg())
+		if (! hasNonRegularArgs(F) )
 			return iter->second = REGULAR;
 	}
 	
@@ -174,6 +174,37 @@ POINTER_KIND PointerAnalyzer::getPointerKindForStore(const Constant* v) const
 			return COMPLETE_OBJECT;
 	}
 	return REGULAR;
+}
+
+POINTER_KIND PointerAnalyzer::getPointerKindForArgOperand(User::const_op_iterator it,
+							  Function::const_arg_iterator arg) const
+{
+	ImmutableCallSite callV ( it->getUser() );
+	assert( callV );
+
+	const Function * F = callV.getCalledFunction();
+
+	// Direct call, just forward to getPointerKind for the argument
+	if ( F && arg != F->arg_end() )
+	{
+		assert( arg->getArgNo() == callV.getArgumentNo(it) );
+
+		switch( F->getIntrinsicID() )
+		{
+		case Intrinsic::cheerp_create_closure:
+			return arg->getArgNo() == 0 ?
+				COMPLETE_OBJECT : REGULAR;
+		case Intrinsic::cheerp_make_complete_object:
+			return COMPLETE_OBJECT;
+		default:
+			return getPointerKind(arg);
+		}
+	}
+	Type * tp = (*it)->getType();
+
+	return tp->getPointerElementType()->isFunctionTy() ?
+		COMPLETE_OBJECT :
+		REGULAR;
 }
 
 bool PointerAnalyzer::hasSelfMember(const Value* v) const
@@ -274,7 +305,7 @@ bool PointerAnalyzer::needsWrappingArray(const Value* v) const
 		else if (isa<CallInst>(U) || isa<InvokeInst>(U) )
 		{
 			std::set<const Value *> openset;
-			if ( usageFlagsForCall(v, ImmutableCallSite(U), openset ) & POINTER_NONCONST_DEREF )
+			if ( usageFlagsForCall(u, ImmutableCallSite(U), openset ) & POINTER_NONCONST_DEREF )
 				return true;
 		}
 		return false;
@@ -420,14 +451,9 @@ uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set
 		{
 			f |= dfsPointerUsageFlagsComplete(U, openset);
 		}
-		else if (const CallInst * I = dyn_cast<CallInst>(U))
+		else if ( ImmutableCallSite cs = U )
 		{
-			// Indirect calls require a finer analysis
-			f |= usageFlagsForCall(v,I,openset);
-		}
-		else if (const InvokeInst * I = dyn_cast<InvokeInst>(U))
-		{
-			f |= usageFlagsForCall(v,I,openset);
+			f |= usageFlagsForCall(*it,cs,openset);
 		}
 		else if (isa<ReturnInst>(U))
 		{
@@ -473,31 +499,32 @@ uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set
 	return f;
 }
 
-uint32_t PointerAnalyzer::usageFlagsForCall(const Value * v, ImmutableCallSite I, std::set<const Value *> & openset) const
+uint32_t PointerAnalyzer::usageFlagsForCall(const llvm::Use & u, ImmutableCallSite I, std::set<const Value *> & openset) const
 {
-	const Function * f = I.getCalledFunction();
+	if (I.isCallee(&u) )
+		return 0;
 
-	if ( !f || canBeCalledIndirectly(f) || f->isVarArg())
+	assert( std::find( I.arg_begin(), I.arg_end(), u) != I.arg_end() );
+
+	const Function * F = I.getCalledFunction();
+
+	if ( !hasNonRegularArgs(F) )
 		return POINTER_UNKNOWN;
 
-	assert( f->arg_size() == I.arg_size() );
-	
-	uint32_t flags = 0;
-	Function::const_arg_iterator iter = f->arg_begin();
+	unsigned argNo = I.getArgumentNo(&u);
 
-	for (unsigned int argNo = 0; iter != f->arg_end(); ++iter, ++argNo)
-		if ( I.getArgument(argNo) == v )
-			flags |= dfsPointerUsageFlagsComplete( iter, openset );
-
-#ifndef NDEBUG
-	bool ok = false;
-	for (unsigned int argNo = 0; argNo < I.arg_size(); ++argNo)
-		if ( I.getArgument(argNo) == v )
-			ok = true;
-	assert(  ok || ((llvm::errs() << f->getName()),false) );
-#endif
-	
-	return flags;
+	if ( argNo < F->arg_size() )
+	{
+		// standard argument
+		Function::const_arg_iterator iter = F->arg_begin();
+		std::advance(iter, argNo);
+		return dfsPointerUsageFlagsComplete(iter, openset);
+	}
+	else
+	{
+		assert( F->isVarArg() );
+		return POINTER_UNKNOWN;
+	}
 }
 
 }
