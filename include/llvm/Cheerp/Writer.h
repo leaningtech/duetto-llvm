@@ -204,10 +204,8 @@ private:
 	void compileFree(const llvm::Value* obj);
 	void compilePointer(const llvm::Value* v, POINTER_KIND acceptedKind);
 	void compileOperandImpl(const llvm::Value* v);
-	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE);
-	void compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, llvm::Function::const_arg_iterator arg_it);
-	void handleBuiltinNamespace(const char* ident, const llvm::Function* calledFunction,
-			llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE);
+	void compileMethodArgs(llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE, llvm::ImmutableCallSite);
+	void handleBuiltinNamespace(const char* ident, llvm::ImmutableCallSite);
 	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
 	void compileMethod(const llvm::Function& F);
 	void compileGlobal(const llvm::GlobalVariable& G);

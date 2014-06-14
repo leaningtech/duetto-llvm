@@ -54,9 +54,9 @@ public:
 	void renderIfOnLabel(int labelId, bool first);
 };
 
-void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Function* calledFunction,
-			User::const_op_iterator it, User::const_op_iterator itE)
+void CheerpWriter::handleBuiltinNamespace(const char* identifier, llvm::ImmutableCallSite callV)
 {
+	assert( callV.getCalledFunction() );
 	const char* ident = identifier;
 	//Read the class name
 	char* className;
@@ -83,9 +83,9 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 	//This condition is necessarily true
 	assert(funcNameLen!=0);
 
-	bool isClientStatic = calledFunction->hasFnAttribute(Attribute::Static);
+	bool isClientStatic = callV.getCalledFunction()->hasFnAttribute(Attribute::Static);
 	//The first arg should be the object
-	if(strncmp(funcName,"get_",4)==0 && (itE-it)==1)
+	if(strncmp(funcName,"get_",4)==0 && callV.arg_size()==1)
 	{
 		//Getter
 		if(className == NULL)
@@ -93,10 +93,10 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			llvm::report_fatal_error(Twine("Unexpected getter without class: ", StringRef(identifier)), false);
 			return;
 		}
-		compileOperand(*it);
+		compileOperand( callV.getArgument(0) );
 		stream << "." << StringRef( funcName + 4, funcNameLen - 4 );
 	}
-	else if(strncmp(funcName,"set_",4)==0 && (itE-it)==2)
+	else if(strncmp(funcName,"set_",4)==0 && callV.arg_size()==2)
 	{
 		//Setter
 		if(className == NULL)
@@ -104,19 +104,19 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			llvm::report_fatal_error(Twine("Unexpected setter without class: ", StringRef(identifier)), false);
 			return;
 		}
-		compileOperand(*it);
-		++it;
+		compileOperand(callV.getArgument(0));
 		stream << "." << StringRef( funcName + 4, funcNameLen - 4 ) <<  " = ";
-		compileOperand(*it);
+		compileOperand(callV.getArgument(1));
 	}
 	else
 	{
+		User::const_op_iterator it = callV.arg_begin();
 		//Regular call
 		if(className)
 		{
 			if(isClientStatic)
 				stream << StringRef(className,classLen);
-			else if(it == itE)
+			else if(callV.arg_empty())
 			{
 				llvm::report_fatal_error(Twine("At least 'this' parameter was expected: ",
 					StringRef(identifier)), false);
@@ -130,7 +130,7 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			stream << ".";
 		}
 		stream << StringRef(funcName,funcNameLen);
-		compileMethodArgs(it,itE);
+		compileMethodArgs(it, callV.arg_end(), callV);
 	}
 }
 
@@ -721,7 +721,8 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//keeping all local variable around. The helper
 		//method is printed on demand depending on a flag
 		stream << "cheerpCreateClosure";
-		compileMethodArgsForDirectCall(it,itE, callV.getCalledFunction()->arg_begin());
+		//TODO cleanup when we have intrinsics in pointer analyzer
+		compileMethodArgs(it,itE, callV);
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::cheerp_make_complete_object)
@@ -769,12 +770,12 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 
 	if(strncmp(ident,"_ZN6client",10)==0)
 	{
-		handleBuiltinNamespace(ident+10,callV.getCalledFunction(),it,itE);
+		handleBuiltinNamespace(ident+10,callV);
 		return COMPILE_OK;
 	}
 	else if(strncmp(ident,"_ZNK6client",11)==0)
 	{
-		handleBuiltinNamespace(ident+11,callV.getCalledFunction(),it,itE);
+		handleBuiltinNamespace(ident+11,callV);
 		return COMPILE_OK;
 	}
 	else if(strncmp(ident,"cheerpCreate_ZN6client",22)==0)
@@ -785,8 +786,18 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//For builtin String, do not use new
 		if(strncmp(typeName, "String", 6)!=0)
 			stream << "new ";
+
 		stream << StringRef(typeName, typeLen);
-		compileMethodArgs(it, itE);
+
+		//TODO cleanup when we have intrinsics in pointer analyzer
+		stream << "(";
+		for (auto cur = it; cur!= itE; ++cur)
+		{
+			if ( cur != it )
+				stream << ",";
+			compileOperand(*cur);
+		}
+		stream <<")";
 		return COMPILE_OK;
 	}
 	return COMPILE_UNSUPPORTED;
@@ -1292,39 +1303,51 @@ void CheerpWriter::compilePHIOfBlockFromOtherBlock(const BasicBlock* to, const B
 	}
 }
 
-void CheerpWriter::compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE)
+void CheerpWriter::compileMethodArgs(User::const_op_iterator it, User::const_op_iterator itE, ImmutableCallSite callV)
 {
+	assert( it == callV.arg_end() || std::find(callV.arg_begin(), callV.arg_end(), *it) != callV.arg_end() );
+	assert( itE == callV.arg_end() || std::find(callV.arg_begin(), callV.arg_end(), *itE) != callV.arg_end() );
+	assert( it <= itE );
+	
 	stream << '(';
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur)
+	
+	Function::const_arg_iterator arg_it;
+	
+	const Function * F = callV.getCalledFunction();
+	
+	if ( F && it != itE )
+	{
+		arg_it = F->arg_begin();
+		std::advance(arg_it, callV.getArgumentNo(it) );
+	}
+	
+	for(User::const_op_iterator cur=it;cur!=itE;++cur)
 	{
 		if(cur!=it)
 			stream << ", ";
 
 		Type * tp = (*cur)->getType();
-		compileOperand(*cur, 
-			tp->isPointerTy() ? 
-				tp->getPointerElementType()->isFunctionTy() ?
-				COMPLETE_OBJECT :
-				REGULAR :
-			UNDECIDED);
-	}
-	stream << ')';
-}
-
-void CheerpWriter::compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it,
-						const llvm::User::const_op_iterator itE,
-						llvm::Function::const_arg_iterator arg_it)
-{
-	stream << '(';
-	
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur, ++arg_it)
-	{
-		if(cur!=it)
-			stream << ", ";
-		if ( arg_it->getType()->isPointerTy() )
-			compileOperand(*cur, analyzer.getPointerKind(&(*arg_it)));
+		
+		if ( tp->isPointerTy() )
+		{
+			if ( F && arg_it != F->arg_end() )
+			{
+				assert( arg_it->getArgNo() == callV.getArgumentNo(cur) );
+				compileOperand(*cur, analyzer.getPointerKind(arg_it) );
+			}
+			else
+			{
+				compileOperand(*cur,
+					       tp->getPointerElementType()->isFunctionTy() ?
+					       COMPLETE_OBJECT :
+					       REGULAR);
+			}
+		}
 		else
-			compileOperand(*cur, REGULAR);
+			compileOperand(*cur);
+		
+		if ( F && arg_it != F->arg_end())
+			++arg_it;
 	}
 	stream << ')';
 }
@@ -1374,7 +1397,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 				compileOperand(ci.getCalledValue());
 			}
 
-			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
+			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(), &ci);
 			stream << ';' << NewLine;
 			//Only consider the normal successor for PHIs here
 			//For each successor output the variables for the phi nodes
@@ -1513,15 +1536,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileNotInlineableIns
 			}
 			//If we are dealing with inline asm we are done
 			if(!ci.isInlineAsm())
-			{
-				if ( analyzer.hasNonRegularArgs(calledFunc) )
-				{
-					assert( calledFunc->getArgumentList().size() == ci.getNumArgOperands() );
-					compileMethodArgsForDirectCall(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(),calledFunc->arg_begin() );
-				}
-				else
-					compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
-			}
+				compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(), &ci);
 			return COMPILE_OK;
 		}
 		case Instruction::LandingPad:
