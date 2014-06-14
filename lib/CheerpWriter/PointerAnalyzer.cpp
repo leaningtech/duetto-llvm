@@ -41,20 +41,6 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 	if ( pt->isPointerTy() && pt->getPointerElementType()->isFunctionTy() )
 		return iter->second = COMPLETE_OBJECT;
 
-	if( const IntrinsicInst * ii = dyn_cast<IntrinsicInst>(v) )
-	{
-		switch( ii->getIntrinsicID() )
-		{
-		case Intrinsic::cheerp_create_closure:
-			return iter->second = COMPLETE_OBJECT;
-		case Intrinsic::cheerp_pointer_base:
-		case Intrinsic::cheerp_make_complete_object:
-			return iter->second = COMPLETE_OBJECT;
-		default:
-			break;
-		}
-	}
-
 	if(TypeSupport::isClientArrayType(pt->getElementType()))
 	{
 		//Handle client arrays like COMPLETE_ARRAYs, so the right 0 offset
@@ -75,6 +61,10 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 		else
 			return iter->second = COMPLETE_OBJECT;
 	}
+	
+	if (DynamicAllocInfo::getAllocType(v) != DynamicAllocInfo::not_an_alloc )
+		return iter->second = COMPLETE_ARRAY;
+
 	//Follow bitcasts
 	if(isBitCast(v))
 	{
@@ -107,6 +97,34 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 		else
 			return iter->second = getPointerKind(bi->getOperand(0));
 	}
+
+	if( const IntrinsicInst * ii = dyn_cast<IntrinsicInst>(v) )
+	{
+		switch( ii->getIntrinsicID() )
+		{
+		case Intrinsic::cheerp_create_closure:
+			return iter->second = COMPLETE_OBJECT;
+		case Intrinsic::cheerp_pointer_base:
+			return iter->second = COMPLETE_OBJECT;
+		case Intrinsic::cheerp_downcast:
+			return iter->second = REGULAR;
+		case Intrinsic::cheerp_upcast_collapsed:
+		case Intrinsic::cheerp_cast_user:
+			//NOTE already handled by isNopCast
+			assert(false);
+		default:
+			break;
+		}
+	}
+
+	if( ImmutableCallSite cs = v )
+	{
+		if ( const Function * F = cs.getCalledFunction() )
+			return iter->second = getPointerKindForReturn(F);
+		else
+			return iter->second = REGULAR;
+	}
+
 	//Follow select
 	if(const SelectInst* s=dyn_cast<SelectInst>(v))
 	{
@@ -121,8 +139,6 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* v) const
 		//The type is the same
 		return iter->second = k1;
 	}
-	if (DynamicAllocInfo::getAllocType(v) != DynamicAllocInfo::not_an_alloc )
-		return iter->second = COMPLETE_ARRAY;
 
 	if ( const Argument * arg = dyn_cast<Argument>(v) )
 	{
@@ -187,6 +203,10 @@ POINTER_KIND PointerAnalyzer::getPointerKindForArgOperand(User::const_op_iterato
 
 		switch( F->getIntrinsicID() )
 		{
+		case Intrinsic::memcpy:
+		case Intrinsic::memmove:
+		case Intrinsic::memset:
+			return REGULAR;
 		case Intrinsic::cheerp_create_closure:
 			return arg->getArgNo() == 0 ?
 				COMPLETE_OBJECT : REGULAR;
@@ -201,6 +221,18 @@ POINTER_KIND PointerAnalyzer::getPointerKindForArgOperand(User::const_op_iterato
 	return tp->getPointerElementType()->isFunctionTy() ?
 		COMPLETE_OBJECT :
 		REGULAR;
+}
+
+POINTER_KIND PointerAnalyzer::getPointerKindForReturn(const Function* F) const
+{
+	if( !F->getReturnType()->isPointerTy() )
+		return UNDECIDED;
+
+	if ( TypeSupport::isImmutableType(F->getReturnType()->getPointerElementType()) )
+		return REGULAR;
+	
+	std::set<const Value *> openset;
+	return (usageFlagsForReturn(F, openset) & need_self_flags) ? REGULAR : COMPLETE_OBJECT;
 }
 
 bool PointerAnalyzer::hasSelfMember(const Value* v) const
@@ -385,6 +417,10 @@ uint32_t PointerAnalyzer::getPointerUsageFlags(const llvm::Value * v) const
 			{
 				continue;
 			}
+			else if ( isa<VAArgInst>(U) )
+			{
+				ans |= POINTER_UNKNOWN;
+			}
 			else
 			{
 #ifndef NDEBUG
@@ -424,10 +460,9 @@ uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set
 		{
 			f |= usageFlagsForCall(*it,cs,openset);
 		}
-		else if (isa<ReturnInst>(U))
+		else if (const ReturnInst * RI = dyn_cast<ReturnInst>(U))
 		{
-			//TODO deal with me properly
-			f |= POINTER_UNKNOWN;
+			f |= usageFlagsForReturn(RI->getParent()->getParent(), openset);
 		}
 		else if (const StoreInst * I = dyn_cast<StoreInst>(U) )
 		{
@@ -443,7 +478,8 @@ uint32_t PointerAnalyzer::dfsPointerUsageFlagsComplete(const Value * v, std::set
 		else if (
 			isa<ConstantStruct>(U) ||
 			isa<ConstantArray>(U) ||
-			isa<GlobalValue>(U) )
+			isa<GlobalValue>(U) ||
+			isa<VAArgInst>(U) )
 		{
 			f |= POINTER_UNKNOWN;
 		}
@@ -480,6 +516,32 @@ uint32_t PointerAnalyzer::usageFlagsForCall(const llvm::Use & u, ImmutableCallSi
 	if ( !hasNonRegularArgs(F) )
 		return POINTER_UNKNOWN;
 
+	// Handle intrinsics
+	if ( const IntrinsicInst * ii = dyn_cast<IntrinsicInst>(I.getInstruction()) )
+	{
+		switch( ii->getIntrinsicID() )
+		{
+		case Intrinsic::cheerp_downcast:
+		case Intrinsic::cheerp_pointer_base:
+			return 0;
+		case Intrinsic::cheerp_pointer_offset:
+			return POINTER_ARITHMETIC;
+		case Intrinsic::cheerp_upcast_collapsed:
+		case Intrinsic::cheerp_cast_user:
+			return dfsPointerUsageFlagsComplete(ii, openset);
+		case Intrinsic::cheerp_create_closure:
+			//TODO implement.
+			return POINTER_UNKNOWN;
+
+		case Intrinsic::memcpy:
+		case Intrinsic::memmove:
+		case Intrinsic::memset:
+			return POINTER_UNKNOWN;
+		default:
+			return POINTER_UNKNOWN;
+		}
+	}
+
 	unsigned argNo = I.getArgumentNo(&u);
 
 	if ( argNo < F->arg_size() )
@@ -496,6 +558,27 @@ uint32_t PointerAnalyzer::usageFlagsForCall(const llvm::Use & u, ImmutableCallSi
 	}
 }
 
+uint32_t PointerAnalyzer::usageFlagsForReturn(const Function* F, std::set<const Value *> & openset) const
+{
+	uint32_t f = 0;
+	if ( canBeCalledIndirectly( F ) )
+		f |= POINTER_UNKNOWN;
+	else
+	{
+		for ( const Use & u : F->uses() )
+		{
+			if ( ImmutableCallSite cs = u.getUser() )
+			{
+				if ( cs.isCallee(&u) )
+				{
+					f |= dfsPointerUsageFlagsComplete(cs.getInstruction(), openset);
+				}
+			}
+		}
+	}
+	return f;
+}
+
 #ifndef NDEBUG
 
 void dumpAllPointers(const Function & F, const PointerAnalyzer & analyzer)
@@ -503,6 +586,19 @@ void dumpAllPointers(const Function & F, const PointerAnalyzer & analyzer)
 	llvm::errs() << "Function: " << F.getName();
 	if ( F.hasAddressTaken() )
 		llvm::errs() << " (with address taken)";
+	if ( F.getReturnType()->isPointerTy() )
+	{
+		llvm::errs() << " [";
+		switch (analyzer.getPointerKindForReturn(&F))
+		{
+			case COMPLETE_OBJECT: llvm::errs() << "COMPLETE_OBJECT"; break;
+			case COMPLETE_ARRAY: llvm::errs() << "COMPLETE_ARRAY"; break;
+			case REGULAR: llvm::errs() << "REGULAR"; break;
+			default: llvm::errs() << "UNDECIDED"; break;
+		}
+		llvm::errs() << ']';
+	}
+
 	llvm::errs() << "\n";
 	
 	for ( const Argument & arg : F.getArgumentList() )

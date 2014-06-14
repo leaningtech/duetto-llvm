@@ -313,6 +313,7 @@ void CheerpWriter::compileDowncast( ImmutableCallSite callV )
 		compileOperand(src, analyzer.getPointerKind(callV.getInstruction()) );
 	else
 	{
+		assert( analyzer.getPointerKind(callV.getInstruction()) == REGULAR );
 		//Do a runtime downcast
 		stream << "{d:";
 		compileDereferencePointer(src, NULL);
@@ -1349,7 +1350,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 			Value* retVal = ri.getReturnValue();
 			stream << "return ";
 			if(retVal)
-				compileOperand(retVal, REGULAR);
+				compileOperand(retVal, analyzer.getPointerKindForReturn(ri.getParent()->getParent()));
 			stream << ';' << NewLine;
 			return COMPILE_OK;
 		}
@@ -1698,7 +1699,7 @@ bool CheerpWriter::compileOffsetForPointer(const Value* val, Type* lastType)
 			}
 		}
 
-		assert( analyzer.hasSelfMember(val) );
+		assert( analyzer.hasSelfMember(val) || ( analyzer.dumpPointer(val), currentFun->dump(), false ) );
 		stream << "'s'";
 
 		return true;

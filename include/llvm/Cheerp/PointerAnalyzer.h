@@ -92,6 +92,8 @@ public:
 	POINTER_KIND getPointerKindForArgOperand(llvm::User::const_op_iterator it,
 						 llvm::Function::const_arg_iterator arg = llvm::Function::const_arg_iterator()) const;
 
+	POINTER_KIND getPointerKindForReturn(const llvm::Function * F) const;
+
 	// Detect if every object pointed by this pointer has a .s member
 	bool hasSelfMember(const llvm::Value * v) const;
 	
@@ -157,9 +159,6 @@ private:
 	/** 
 	 * Compute the usage of a single pointer, regardless of the phi nodes
 	 */
-	//TODO at the moment if it is used in a CallInst it returns POINTER_UNKNOWN.
-	// CallInst should be handled inside getPointerUsageFlagsComplete, in order to provide information on how that pointer is used inside the function call.
-	// This is especially important at the moment for memset/memcpy/memmove.
 	uint32_t getPointerUsageFlags(const llvm::Value* v) const;
 	
 	/**
@@ -170,23 +169,20 @@ private:
 	uint32_t dfsPointerUsageFlagsComplete(const llvm::Value * v,std::set<const llvm::Value *> & openset) const;
 	
 	uint32_t usageFlagsForCall(const llvm::Use & u, llvm::ImmutableCallSite I, std::set<const llvm::Value *> & openset) const;
+	uint32_t usageFlagsForReturn(const llvm::Function * F, std::set<const llvm::Value *> & openset) const;
 
 	// Detect if a function can possibly be called indirectly
 	bool canBeCalledIndirectly(const llvm::Function * f) const
 	{
-		return f->empty() || f->hasAddressTaken();
+		return f->hasAddressTaken();
 	}
 	
 	typedef std::map<const llvm::Value *, POINTER_KIND> pointer_kind_map_t;
 	typedef std::map<const llvm::Value *, uint32_t> pointer_usage_map_t;
 	
 	mutable pointer_kind_map_t pointerKindMap;
-	mutable pointer_usage_map_t pointerCompleteUsageMap;	
+	mutable pointer_usage_map_t pointerCompleteUsageMap;
 	mutable pointer_usage_map_t pointerUsageMap;
-	
-	typedef std::map<const llvm::Function *, bool > function_indirect_call_map_t;
-	mutable function_indirect_call_map_t functionIndirectCallMap;
-	
 	
 	const TypeSupport & types;
 	llvm::AliasAnalysis & AA;
