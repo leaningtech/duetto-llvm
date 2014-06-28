@@ -24,6 +24,11 @@ using namespace cheerp;
 //De-comment this to debug why a global is included in the JS
 //#define DEBUG_GLOBAL_DEPS
 
+#ifndef CHEERP_DEBUG_POINTERS 
+//Set this to 1 if you want pointer dump info (NDEBUG must be not defined)
+#define CHEERP_DEBUG_POINTERS 0
+#endif
+
 class CheerpRenderInterface: public RenderInterface
 {
 private:
@@ -54,9 +59,9 @@ public:
 	void renderIfOnLabel(int labelId, bool first);
 };
 
-void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Function* calledFunction,
-			User::const_op_iterator it, User::const_op_iterator itE)
+void CheerpWriter::handleBuiltinNamespace(const char* identifier, llvm::ImmutableCallSite callV)
 {
+	assert( callV.getCalledFunction() );
 	const char* ident = identifier;
 	//Read the class name
 	char* className;
@@ -83,9 +88,9 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 	//This condition is necessarily true
 	assert(funcNameLen!=0);
 
-	bool isClientStatic = calledFunction->hasFnAttribute(Attribute::Static);
+	bool isClientStatic = callV.getCalledFunction()->hasFnAttribute(Attribute::Static);
 	//The first arg should be the object
-	if(strncmp(funcName,"get_",4)==0 && (itE-it)==1)
+	if(strncmp(funcName,"get_",4)==0 && callV.arg_size()==1)
 	{
 		//Getter
 		if(className == NULL)
@@ -93,10 +98,10 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			llvm::report_fatal_error(Twine("Unexpected getter without class: ", StringRef(identifier)), false);
 			return;
 		}
-		compileOperand(*it);
+		compileOperand( callV.getArgument(0) );
 		stream << "." << StringRef( funcName + 4, funcNameLen - 4 );
 	}
-	else if(strncmp(funcName,"set_",4)==0 && (itE-it)==2)
+	else if(strncmp(funcName,"set_",4)==0 && callV.arg_size()==2)
 	{
 		//Setter
 		if(className == NULL)
@@ -104,19 +109,19 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			llvm::report_fatal_error(Twine("Unexpected setter without class: ", StringRef(identifier)), false);
 			return;
 		}
-		compileOperand(*it);
-		++it;
+		compileOperand(callV.getArgument(0));
 		stream << "." << StringRef( funcName + 4, funcNameLen - 4 ) <<  " = ";
-		compileOperand(*it);
+		compileOperand(callV.getArgument(1));
 	}
 	else
 	{
+		User::const_op_iterator it = callV.arg_begin();
 		//Regular call
 		if(className)
 		{
 			if(isClientStatic)
 				stream << StringRef(className,classLen);
-			else if(it == itE)
+			else if(callV.arg_empty())
 			{
 				llvm::report_fatal_error(Twine("At least 'this' parameter was expected: ",
 					StringRef(identifier)), false);
@@ -130,7 +135,7 @@ void CheerpWriter::handleBuiltinNamespace(const char* identifier, const llvm::Fu
 			stream << ".";
 		}
 		stream << StringRef(funcName,funcNameLen);
-		compileMethodArgs(it,itE);
+		compileMethodArgs(it, callV.arg_end(), callV);
 	}
 }
 
@@ -308,6 +313,7 @@ void CheerpWriter::compileDowncast( ImmutableCallSite callV )
 		compileOperand(src, analyzer.getPointerKind(callV.getInstruction()) );
 	else
 	{
+		assert( analyzer.getPointerKind(callV.getInstruction()) == REGULAR );
 		//Do a runtime downcast
 		stream << "{d:";
 		compileDereferencePointer(src, NULL);
@@ -636,18 +642,17 @@ void CheerpWriter::compileFree(const Value* obj)
 	//TODO: Clean up class related data structures
 }
 
-CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(ImmutableCallSite callV, const Function * func)
+CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(ImmutableCallSite callV)
 {
-	assert( callV.isCall() || callV.isInvoke() );
-	assert( func );
-	assert( (func == callV.getCalledFunction() ) || !(callV.getCalledFunction()) );
+	assert( callV );
+	assert( callV.getCalledFunction() );
 	
-	bool userImplemented = !func->empty();
+	bool userImplemented = !callV.getCalledFunction()->empty();
 	
 	ImmutableCallSite::arg_iterator it = callV.arg_begin(), itE = callV.arg_end();
 	
-	const char* ident = func->getName().data();
-	unsigned instrinsicId = func->getIntrinsicID();
+	const char* ident = callV.getCalledFunction()->getName().data();
+	unsigned instrinsicId = callV.getCalledFunction()->getIntrinsicID();
 	//First handle high priority builtins, they will be used even
 	//if an implementation is available from the user
 	if(instrinsicId==Intrinsic::memmove)
@@ -722,7 +727,8 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//keeping all local variable around. The helper
 		//method is printed on demand depending on a flag
 		stream << "cheerpCreateClosure";
-		compileMethodArgsForDirectCall(it,itE, func->arg_begin());
+		//TODO cleanup when we have intrinsics in pointer analyzer
+		compileMethodArgs(it,itE, callV);
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::cheerp_make_complete_object)
@@ -770,12 +776,12 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 
 	if(strncmp(ident,"_ZN6client",10)==0)
 	{
-		handleBuiltinNamespace(ident+10,callV.getCalledFunction(),it,itE);
+		handleBuiltinNamespace(ident+10,callV);
 		return COMPILE_OK;
 	}
 	else if(strncmp(ident,"_ZNK6client",11)==0)
 	{
-		handleBuiltinNamespace(ident+11,callV.getCalledFunction(),it,itE);
+		handleBuiltinNamespace(ident+11,callV);
 		return COMPILE_OK;
 	}
 	else if(strncmp(ident,"cheerpCreate_ZN6client",22)==0)
@@ -786,8 +792,9 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//For builtin String, do not use new
 		if(strncmp(typeName, "String", 6)!=0)
 			stream << "new ";
+
 		stream << StringRef(typeName, typeLen);
-		compileMethodArgs(it, itE);
+		compileMethodArgs(it, itE, callV);
 		return COMPILE_OK;
 	}
 	return COMPILE_UNSUPPORTED;
@@ -1293,32 +1300,38 @@ void CheerpWriter::compilePHIOfBlockFromOtherBlock(const BasicBlock* to, const B
 	}
 }
 
-void CheerpWriter::compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE)
+void CheerpWriter::compileMethodArgs(User::const_op_iterator it, User::const_op_iterator itE, ImmutableCallSite callV)
 {
-	stream << '(';
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur)
-	{
-		if(cur!=it)
-			stream << ", ";
-		compileOperand(*cur, REGULAR);
-	}
-	stream << ')';
-}
-
-void CheerpWriter::compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it,
-						const llvm::User::const_op_iterator itE,
-						llvm::Function::const_arg_iterator arg_it)
-{
+	assert( it == callV.arg_end() || std::find(callV.arg_begin(), callV.arg_end(), *it) != callV.arg_end() );
+	assert( itE == callV.arg_end() || std::find(callV.arg_begin(), callV.arg_end(), *itE) != callV.arg_end() );
+	assert( it <= itE );
+	
 	stream << '(';
 	
-	for(llvm::User::const_op_iterator cur=it;cur!=itE;++cur, ++arg_it)
+	Function::const_arg_iterator arg_it;
+	
+	const Function * F = callV.getCalledFunction();
+	
+	if ( F && it != itE )
+	{
+		arg_it = F->arg_begin();
+		std::advance(arg_it, callV.getArgumentNo(it) );
+	}
+	
+	for(User::const_op_iterator cur=it;cur!=itE;++cur)
 	{
 		if(cur!=it)
 			stream << ", ";
-		if ( arg_it->getType()->isPointerTy() )
-			compileOperand(*cur, analyzer.getPointerKind(&(*arg_it)));
+
+		Type * tp = (*cur)->getType();
+		
+		if ( tp->isPointerTy() )
+			compileOperand(*cur, analyzer.getPointerKindForArgOperand(cur, arg_it) );
 		else
-			compileOperand(*cur, REGULAR);
+			compileOperand(*cur);
+		
+		if ( F && arg_it != F->arg_end())
+			++arg_it;
 	}
 	stream << ')';
 }
@@ -1337,7 +1350,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 			Value* retVal = ri.getReturnValue();
 			stream << "return ";
 			if(retVal)
-				compileOperand(retVal, REGULAR);
+				compileOperand(retVal, analyzer.getPointerKindForReturn(ri.getParent()->getParent()));
 			stream << ';' << NewLine;
 			return COMPILE_OK;
 		}
@@ -1349,7 +1362,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 			if(ci.getCalledFunction())
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, ci.getCalledFunction());
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				assert(cf!=COMPILE_EMPTY);
 				if(cf==COMPILE_OK)
 				{
@@ -1368,7 +1381,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileTerminatorInstru
 				compileOperand(ci.getCalledValue());
 			}
 
-			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
+			compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(), &ci);
 			stream << ';' << NewLine;
 			//Only consider the normal successor for PHIs here
 			//For each successor output the variables for the phi nodes
@@ -1495,7 +1508,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileNotInlineableIns
 			if(calledFunc)
 			{
 				//Direct call
-				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci, calledFunc);
+				COMPILE_INSTRUCTION_FEEDBACK cf=handleBuiltinCall(&ci);
 				if(cf!=COMPILE_UNSUPPORTED)
 					return cf;
 				stream << namegen.getName(calledFunc);
@@ -1507,15 +1520,7 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::compileNotInlineableIns
 			}
 			//If we are dealing with inline asm we are done
 			if(!ci.isInlineAsm())
-			{
-				if ( analyzer.hasNonRegularArgs(calledFunc) )
-				{
-					assert( calledFunc->getArgumentList().size() == ci.getNumArgOperands() );
-					compileMethodArgsForDirectCall(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(),calledFunc->arg_begin() );
-				}
-				else
-					compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands());
-			}
+				compileMethodArgs(ci.op_begin(),ci.op_begin()+ci.getNumArgOperands(), &ci);
 			return COMPILE_OK;
 		}
 		case Instruction::LandingPad:
@@ -1694,7 +1699,7 @@ bool CheerpWriter::compileOffsetForPointer(const Value* val, Type* lastType)
 			}
 		}
 
-		assert( analyzer.hasSelfMember(val) );
+		assert( analyzer.hasSelfMember(val) || ( analyzer.dumpPointer(val), currentFun->dump(), false ) );
 		stream << "'s'";
 
 		return true;
@@ -2708,12 +2713,23 @@ void CheerpWriter::makeJS()
 	compileClassesExportedToJs();
 	compileNullPtrs();
 	
+#if CHEERP_DEBUG_POINTERS
+	writePointerDumpHeader();
+#endif
+
 	for ( const Function * F : globalDeps.functionOrderedList() )
 		if (!F->empty())
+		{
 			compileMethod(*F);
+#if CHEERP_DEBUG_POINTERS
+			dumpAllPointers(*F, analyzer);
+#endif
+		}
 	
 	for ( const GlobalVariable * GV : globalDeps.varsOrderedList() )
+	{
 		compileGlobal(*GV);
+	}
 
 	for ( StructType * st : globalDeps.classesWithBaseInfo() )
 		compileClassType(st);
@@ -2746,10 +2762,4 @@ void CheerpWriter::makeJS()
 	// Link the source map if necessary
 	if (!sourceMapName.empty())
 		stream << "//# sourceMappingURL=" << sourceMapName;
-	
-#ifdef CHEERP_DEBUG_POINTERS
-	analyzer.dumpAllFunctions();
-	analyzer.dumpAllPointers();
-#endif //CHEERP_DEBUG_POINTERS
-
 }

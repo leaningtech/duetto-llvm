@@ -204,11 +204,9 @@ private:
 	void compileFree(const llvm::Value* obj);
 	void compilePointer(const llvm::Value* v, POINTER_KIND acceptedKind);
 	void compileOperandImpl(const llvm::Value* v);
-	void compileMethodArgs(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE);
-	void compileMethodArgsForDirectCall(const llvm::User::const_op_iterator it, const llvm::User::const_op_iterator itE, llvm::Function::const_arg_iterator arg_it);
-	void handleBuiltinNamespace(const char* ident, const llvm::Function* calledFunction,
-			llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE);
-	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV, const llvm::Function * f);
+	void compileMethodArgs(llvm::User::const_op_iterator it, llvm::User::const_op_iterator itE, llvm::ImmutableCallSite);
+	void handleBuiltinNamespace(const char* ident, llvm::ImmutableCallSite);
+	COMPILE_INSTRUCTION_FEEDBACK handleBuiltinCall(llvm::ImmutableCallSite callV);
 	void compileMethod(const llvm::Function& F);
 	void compileGlobal(const llvm::GlobalVariable& G);
 	uint32_t compileClassTypeRecursive(const std::string& baseName, llvm::StructType* currentType, uint32_t baseCount);
@@ -228,7 +226,8 @@ public:
 	ostream_proxy stream;
 	CheerpWriter(llvm::Module& m, llvm::raw_ostream& s, llvm::AliasAnalysis& AA,
 		const std::string& sourceMapName, llvm::raw_ostream* sourceMap, bool ReadableOutput):
-		module(m),targetData(&m),AA(AA),currentFun(NULL),globalDeps(m), namegen( globalDeps, ReadableOutput ),types(m, globalDeps.classesWithBaseInfo() ), analyzer( namegen, types, AA ),
+		module(m),targetData(&m),AA(AA),currentFun(NULL),globalDeps(m), namegen( globalDeps, ReadableOutput ),
+		types(m, globalDeps.classesWithBaseInfo() ), analyzer( types, AA ),
 		sourceMapGenerator(sourceMap,m.getContext()),sourceMapName(sourceMapName),NewLine(sourceMapGenerator),
 		stream(s, ReadableOutput)
 	{

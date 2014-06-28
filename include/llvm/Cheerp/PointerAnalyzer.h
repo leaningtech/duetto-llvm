@@ -77,12 +77,23 @@ enum POINTER_KIND {
 class PointerAnalyzer {
 public:
 	
-	PointerAnalyzer( NameGenerator & namegen, const TypeSupport & types, llvm::AliasAnalysis & AA ) : namegen(namegen), types(types),AA(AA) {}
-	
+	PointerAnalyzer( const TypeSupport & types, llvm::AliasAnalysis & AA ) : types(types),AA(AA) {}
+
 	POINTER_KIND getPointerKind(const llvm::Value* v) const;
 	POINTER_KIND getPointerKindForStore(const llvm::Value * storeDest) const;
 	POINTER_KIND getPointerKindForStore(const llvm::Constant * cval) const;
-	
+
+	/**
+	 * Return the pointer kind for an Argument operand in a Call/Invoke instruction.
+	 *
+	 * "it" must be an operand of the call instruction (not the called function operand).
+	 * "arg" is required only if the call is direct. It can be the end iterator if the operand is a vararg
+	 */
+	POINTER_KIND getPointerKindForArgOperand(llvm::User::const_op_iterator it,
+						 llvm::Function::const_arg_iterator arg = llvm::Function::const_arg_iterator()) const;
+
+	POINTER_KIND getPointerKindForReturn(const llvm::Function * F) const;
+
 	// Detect if every object pointed by this pointer has a .s member
 	bool hasSelfMember(const llvm::Value * v) const;
 	
@@ -90,14 +101,12 @@ public:
 	// The function pointer might be null, in this case return false.
 	bool hasNonRegularArgs(const llvm::Function * f) const
 	{
-		return (f && !canBeCalledIndirectly(f) && !f->isVarArg() );
+		return (f && !canBeCalledIndirectly(f) );
 	}
 
 #ifndef NDEBUG
 	// Dump a pointer value info
-	void dumpPointer(const llvm::Value * v) const;
-	void dumpAllPointers() const;
-        void dumpAllFunctions() const;
+	void dumpPointer(const llvm::Value * v, bool dumpOwnerFuncion = true) const;
 #endif //NDEBUG
 
 private:
@@ -150,9 +159,6 @@ private:
 	/** 
 	 * Compute the usage of a single pointer, regardless of the phi nodes
 	 */
-	//TODO at the moment if it is used in a CallInst it returns POINTER_UNKNOWN.
-	// CallInst should be handled inside getPointerUsageFlagsComplete, in order to provide information on how that pointer is used inside the function call.
-	// This is especially important at the moment for memset/memcpy/memmove.
 	uint32_t getPointerUsageFlags(const llvm::Value* v) const;
 	
 	/**
@@ -162,42 +168,34 @@ private:
 	 */
 	uint32_t dfsPointerUsageFlagsComplete(const llvm::Value * v,std::set<const llvm::Value *> & openset) const;
 	
-	uint32_t usageFlagsForCall(const llvm::Value * v, llvm::ImmutableCallSite I, std::set<const llvm::Value *> & openset) const;	
+	uint32_t usageFlagsForCall(const llvm::Use & u, llvm::ImmutableCallSite I, std::set<const llvm::Value *> & openset) const;
+	uint32_t usageFlagsForReturn(const llvm::Function * F, std::set<const llvm::Value *> & openset) const;
 
 	// Detect if a function can possibly be called indirectly
 	bool canBeCalledIndirectly(const llvm::Function * f) const
 	{
-#ifndef NDEBUG
-		debugAllFunctionsSet.insert(f);
-#endif
-		return f->empty() || f->hasAddressTaken();
+		return f->hasAddressTaken();
 	}
 	
 	typedef std::map<const llvm::Value *, POINTER_KIND> pointer_kind_map_t;
 	typedef std::map<const llvm::Value *, uint32_t> pointer_usage_map_t;
 	
 	mutable pointer_kind_map_t pointerKindMap;
-	mutable pointer_usage_map_t pointerCompleteUsageMap;	
+	mutable pointer_usage_map_t pointerCompleteUsageMap;
 	mutable pointer_usage_map_t pointerUsageMap;
 	
-	typedef std::map<const llvm::Function *, bool > function_indirect_call_map_t;
-	mutable function_indirect_call_map_t functionIndirectCallMap;
-	
-#ifndef NDEBUG
-	typedef std::set<const llvm::Value *> known_pointers_t;
-	mutable known_pointers_t debugAllPointersSet;
-        
-        typedef std::set<const llvm::Function *> known_functions_t;
-        mutable known_functions_t debugAllFunctionsSet;
-#endif //NDEBUG
-	
-	const NameGenerator & namegen;
 	const TypeSupport & types;
 	llvm::AliasAnalysis & AA;
-
 };
 
 /** @} */
+
+#ifndef NDEBUG
+
+void dumpAllPointers(const llvm::Function &, const PointerAnalyzer & );
+void writePointerDumpHeader();
+
+#endif //NDEBUG
 
 }
 
