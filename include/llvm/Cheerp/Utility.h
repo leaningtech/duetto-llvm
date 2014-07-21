@@ -172,7 +172,7 @@ public:
 		opnew, // operator new(unsigned int)
 		opnew_array // operator new[](unsigned int)
 	};
-	
+
 	/**
 	 * This constructor works with any instruction.
 	 * 
@@ -181,13 +181,21 @@ public:
 	 * use of this object is not permitted.
 	 */
 	DynamicAllocInfo(llvm::ImmutableCallSite);
-	
+
 	bool isValidAlloc() const { return type != not_an_alloc; }
-	
+
 	AllocType getAllocType() const { return type; }
-	
+
 	static AllocType getAllocType(llvm::ImmutableCallSite);
-	
+
+	/**
+	 * Get the call/invoke instruction
+	 */
+	const llvm::Instruction * getInstruction() const
+	{
+		return call.getInstruction();
+	}
+
 	/**
 	 * Every alloc instruction produces an i8*.
 	 * This function tries to understand how the result of an alloc
@@ -196,12 +204,12 @@ public:
 	 * Will report an llvm error if the use of the result is not consistent
 	 */
 	llvm::PointerType * getCastedType() const { return castedType; }
-	
+
 	/**
 	 * This argument will never be null
 	 */
 	const llvm::Value * getByteSizeArg() const;
-	
+
 	/**
 	 * This can be null if getAllocType() == calloc
 	 */
@@ -216,17 +224,17 @@ public:
 	 * Check if the size of the allocation is known only at runtime
 	 */
 	bool sizeIsRuntime() const;
-	
+
 	/**
 	 * Check if the allocation should use a createArray function
 	 */
 	bool useCreateArrayFunc() const;
-	
+
 	/**
 	 * Check if the allocation should use a createTypedArray function
 	 */
 	bool useCreatePointerArrayFunc() const;
-	
+
 	/**
 	 * Check if the allocation should use typed arrays
 	 */
