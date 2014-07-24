@@ -22,8 +22,8 @@ using namespace llvm;
 using namespace std;
 using namespace cheerp;
 
-//De-comment this to debug why a global is included in the JS
-//#define DEBUG_GLOBAL_DEPS
+//De-comment this to debug the pointer kind of every function
+//#define CHEERP_DEBUG_POINTERS
 
 class CheerpRenderInterface: public RenderInterface
 {
@@ -854,7 +854,13 @@ CheerpWriter::COMPILE_INSTRUCTION_FEEDBACK CheerpWriter::handleBuiltinCall(Immut
 		//keeping all local variable around. The helper
 		//method is printed on demand depending on a flag
 		stream << "cheerpCreateClosure";
-		compileMethodArgs(it,itE, callV);
+		assert( isa<Function>( callV.getArgument(0) ) );
+		stream << "cheerpCreateClosure(";
+		compileCompleteObject( callV.getArgument(0) );
+		stream << ',';
+		compilePointerAs( callV.getArgument(1), 
+				  PA.getPointerKind( cast<Function>(callV.getArgument(0))->arg_begin() ) );
+		stream << ')';
 		return COMPILE_OK;
 	}
 	else if(instrinsicId==Intrinsic::cheerp_make_complete_object)
@@ -2522,6 +2528,9 @@ void CheerpWriter::makeJS()
 	for(const Function * F : globalDeps.functionOrderedList())
 		if(!F->empty())
 		{
+#ifdef CHEERP_DEBUG_POINTERS
+			dumpAllPointers(*F, PA);
+#endif //CHEERP_DEBUG_POINTERS
 			compileMethod(*F);
 		}
 
@@ -2576,12 +2585,6 @@ void CheerpWriter::makeJS()
 	{
 		stream << "//# sourceMappingURL=" << sourceMapName;
 	}
-
-#ifdef CHEERP_DEBUG_POINTERS
-	PA.dumpAllFunctions();
-	PA.dumpAllPointers();
-#endif //CHEERP_DEBUG_POINTERS
-
 }
 
 void CheerpWriter::compileBB(const BasicBlock& BB, const std::map<const BasicBlock*, uint32_t>& blocksMap)
