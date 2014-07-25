@@ -72,13 +72,16 @@ struct PointerUsageVisitor
 	KindOrUnknown visitReturn(const Function* F);
 	POINTER_KIND getKindForType(Type*) const;
 
-	KindOrUnknown visitAllUses(const Value* U)
+	KindOrUnknown visitAllUses(const Value* v)
 	{
-		return std::accumulate(U->use_begin(), U->use_end(), KindOrUnknown(COMPLETE_OBJECT),
-				       [this](KindOrUnknown lhs, const Use & u)
-				       {
-					       return lhs || visitUse(&u);
-				       });
+		KindOrUnknown result = COMPLETE_OBJECT;
+		for(const Use& u : v->uses())
+		{
+			result = result || visitUse(&u);
+			if (REGULAR==result)
+				break;
+		}
+		return result;
 	}
 
 	Type* realType(const Value* v) const
@@ -279,7 +282,7 @@ KindOrUnknown PointerUsageVisitor::visitUse(const Use* U)
 		return visitReturn(ret->getParent()->getParent());
 	}
 
-	if(isBitCast(p) || isa< SelectInst > (p) || isa < PHINode >(p))
+	if(isBitCast(p) || isa<SelectInst> (p) || isa <PHINode>(p))
 		return visitValue(p);
 
 	if(isa<Constant>(p))
@@ -314,21 +317,23 @@ KindOrUnknown PointerUsageVisitor::visitReturn(const Function* F)
 		return k;
 	};
 
+	if(getKindForType(F->getReturnType()->getPointerElementType())==COMPLETE_OBJECT)
+		return CacheAndReturn(COMPLETE_OBJECT);
+
 	if(F->hasAddressTaken())
 		return CacheAndReturn(REGULAR);
 
-	return CacheAndReturn(
-		std::accumulate(F->use_begin(),
-				F->use_end(),
-				KindOrUnknown(COMPLETE_OBJECT),
-				[&](KindOrUnknown lhs, const Use & u)
-				{
-					ImmutableCallSite cs = u.getUser();
+	KindOrUnknown result = COMPLETE_OBJECT;
+	for(const Use& u : F->uses())
+	{
+		ImmutableCallSite cs = u.getUser();
+		if(cs && cs.isCallee(&u))
+			result = result || visitAllUses(cs.getInstruction());
 
-					return (cs && cs.isCallee(&u)) ?
-						lhs || visitAllUses(cs.getInstruction()) : 
-						lhs;
-				}) );
+		if (REGULAR==result)
+			break;
+	}
+	return CacheAndReturn(result);
 }
 
 POINTER_KIND PointerUsageVisitor::getKindForType(Type* tp) const
