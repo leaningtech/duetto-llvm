@@ -11,8 +11,7 @@
 
 #include "llvm/Cheerp/PointerAnalyzer.h"
 #include "llvm/Cheerp/Utility.h"
-#include "llvm/ADT/Optional.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -24,7 +23,36 @@ using namespace llvm;
 namespace cheerp
 {
 
-typedef llvm::Optional<POINTER_KIND> KindOrUnknown;
+struct KindOrUnknown
+{
+	enum {UNKNOWN = REGULAR+1};
+
+	KindOrUnknown() : val(UNKNOWN){}
+	KindOrUnknown(POINTER_KIND k) : val(k){}
+
+	friend bool operator==(const KindOrUnknown & lhs, const KindOrUnknown & rhs)
+	{
+		return lhs.val == rhs.val;
+	}
+
+	friend bool operator!=(const KindOrUnknown & lhs, const KindOrUnknown & rhs)
+	{
+		return !(lhs==rhs);
+	}
+
+	explicit operator bool() const
+	{
+		return val!=UNKNOWN;
+	}
+
+	POINTER_KIND getValue() const
+	{
+		assert(val!=UNKNOWN);
+		return POINTER_KIND(val);
+	}
+
+	unsigned val;
+};
 
 static KindOrUnknown operator||(const KindOrUnknown & lhs, const KindOrUnknown & rhs)
 {
@@ -34,35 +62,19 @@ static KindOrUnknown operator||(const KindOrUnknown & lhs, const KindOrUnknown &
 	// CO | RE = RE
 	// CO | CO = CO
 	// RE | RE = RE
-	
+
 	// Handle 2,4, and 6
-	if ( (lhs && *lhs == REGULAR) || (rhs && *rhs == REGULAR) )
+	if (lhs==REGULAR || rhs==REGULAR)
 		return REGULAR;
 	// Handle 1 and 3
-	if ( !(lhs && rhs) )
-		return None;
+	if (!(lhs && rhs))
+		return {};
 	return COMPLETE_OBJECT;
-}
-
-static bool operator==(const KindOrUnknown & lhs, const KindOrUnknown & rhs)
-{
-	return lhs && rhs ? *lhs == *rhs : !lhs && !rhs;
-}
-
-static bool operator!=(const KindOrUnknown & lhs, const KindOrUnknown & rhs)
-{
-	return !(lhs == rhs);
-}
-
-template<class T>
-static T getValueOr(const llvm::Optional<T> & opt, T val)
-{
-	return opt ? *opt : val;
 }
 
 struct PointerUsageVisitor
 {	
-	typedef llvm::SmallSet< const llvm::Value*, 8> visited_set_t;
+	typedef llvm::DenseSet< const llvm::Value* > visited_set_t;
 	typedef PointerAnalyzer::ValueKindMap value_kind_map_t;
 	
 	PointerUsageVisitor( value_kind_map_t & cache ) : cachedValues(cache) {}
@@ -103,14 +115,14 @@ KindOrUnknown PointerUsageVisitor::visitValue(const Value* p)
 	if(cachedValues.count(p))
 		return cachedValues[p];
 
-	if(!closedset.insert(p))
-		return None;
+	if(!closedset.insert(p).second)
+		return {};
 
 	auto CacheAndReturn = [&](KindOrUnknown k) 
 	{ 
 		closedset.erase(p); 
 		if (k)
-			cachedValues.insert( std::make_pair(p, k.getValue() ) );
+			cachedValues.insert(std::make_pair(p, k.getValue()));
 		return k;
 	};
 
@@ -312,14 +324,14 @@ KindOrUnknown PointerUsageVisitor::visitReturn(const Function* F)
 	if(cachedValues.count(F->begin()))
 		return cachedValues[F->begin()];
 
-	if(!closedset.insert(F))
-		return None;
+	if(!closedset.insert(F).second)
+		return {};
 
 	auto CacheAndReturn = [&](KindOrUnknown k) 
 	{ 
 		closedset.erase(F); 
 		if (k)
-			cachedValues.insert( std::make_pair(F->begin(), k.getValue() ) );
+			cachedValues.insert( std::make_pair(F->begin(),k.getValue()) );
 		return k;
 	};
 
@@ -397,7 +409,7 @@ POINTER_KIND PointerAnalyzer::getPointerKind(const Value* p) const
 	{
 		return cache.insert( std::make_pair(p, COMPLETE_OBJECT) ).first->second;
 	}
-	return *k;
+	return k.getValue();
 }
 
 POINTER_KIND PointerAnalyzer::getPointerKindForReturn(const Function* F) const
@@ -412,7 +424,7 @@ POINTER_KIND PointerAnalyzer::getPointerKindForReturn(const Function* F) const
 	{
 		return cache.insert( std::make_pair(F->begin(), COMPLETE_OBJECT) ).first->second;
 	}
-	return *k;
+	return k.getValue();
 }
 
 POINTER_KIND PointerAnalyzer::getPointerKindForType(Type* tp) const
